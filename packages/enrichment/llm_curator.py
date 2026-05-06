@@ -22,9 +22,13 @@ from typing import Any, Optional
 from packages.shared.event_state import empty_person
 
 
-MODEL = "claude-sonnet-4-6"
+import os
+# Sonnet by default — candidate synthesis from search results benefits from
+# the bigger model. Override with ANTHROPIC_CURATOR_MODEL=claude-haiku-4-5-20251001
+# to cut cost ~3-5x at some recall loss.
+MODEL = os.environ.get("ANTHROPIC_CURATOR_MODEL", "claude-sonnet-4-6")
 WEB_SEARCH_TOOL = {"type": "web_search_20250305", "name": "web_search"}
-DEFAULT_OVERSOURCE_FACTOR = 1.5  # source 1.5x target_size so the room has bench depth
+DEFAULT_OVERSOURCE_FACTOR = 1.1  # was 1.5 — extra bench depth wasn't worth the cost
 
 
 def _build_prompt(event_brief: str, target_count: int,
@@ -84,8 +88,8 @@ def curate(event_brief: str,
            *,
            oversource_factor: float = DEFAULT_OVERSOURCE_FACTOR,
            model: str = MODEL,
-           max_tokens: int = 32000,
-           max_searches: int = 20) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+           max_tokens: int = 16000,
+           max_searches: int = 10) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Returns (people_list, telemetry_dict).
 
     people_list conforms to the canonical person schema. telemetry_dict has
@@ -111,6 +115,16 @@ def curate(event_brief: str,
     requested = max(target_count, int(round(target_count * oversource_factor)))
     prompt = _build_prompt(event_brief, requested, audience_icp, avoid_personas)
 
+    # Cache hit on identical prompt = no LLM call, no web search bill.
+    from packages.shared import cache as _cache
+    cache_parts = (model, "v2", str(requested), prompt)
+    cached = _cache.get("llm_curator", *cache_parts)
+    if cached is not None:
+        telemetry["status"] = "cached"
+        telemetry["people_returned"] = len(cached)
+        telemetry["notes"].append("Cache hit; no LLM call or web searches billed.")
+        return cached, telemetry
+
     client = anthropic.Anthropic()
     web_tool = dict(WEB_SEARCH_TOOL)
     web_tool["max_uses"] = max_searches  # cap web search usage per run
@@ -131,6 +145,8 @@ def curate(event_brief: str,
     telemetry["status"] = "ok" if people else "empty"
     telemetry["raw_text_len"] = len(raw)
     telemetry["people_returned"] = len(people)
+    if people:
+        _cache.put("llm_curator", people, *cache_parts)
     if hasattr(response, "usage"):
         telemetry["usage"] = {
             "input_tokens": response.usage.input_tokens,

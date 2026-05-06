@@ -20,7 +20,10 @@ import re
 from typing import Any
 
 
-MODEL = "claude-sonnet-4-6"
+import os
+# Haiku is plenty for structured persona design and ~10x cheaper than Sonnet.
+# Override with ANTHROPIC_DESIGN_MODEL=claude-sonnet-4-6 for higher quality.
+MODEL = os.environ.get("ANTHROPIC_DESIGN_MODEL", "claude-haiku-4-5-20251001")
 
 
 # Minimal generic fallback used only when the LLM is unavailable. NOT
@@ -163,6 +166,15 @@ def design_audience(event_brief: str, *, model: str = MODEL,
         telemetry["notes"].append("ANTHROPIC_API_KEY not set; using generic fallback.")
         return _GENERIC_FALLBACK, telemetry
 
+    # Cache hit on identical brief + model = no LLM call.
+    from packages.shared import cache as _cache
+    cached = _cache.get("audience_designer", model, "v1", event_brief)
+    if cached is not None:
+        telemetry["status"] = "cached"
+        telemetry["personas"] = [p.get("name") for p in cached.get("audience_icp", [])]
+        telemetry["notes"].append("Cache hit; no LLM call billed.")
+        return cached, telemetry
+
     try:
         import anthropic  # type: ignore
     except ImportError:
@@ -186,6 +198,7 @@ def design_audience(event_brief: str, *, model: str = MODEL,
     telemetry["status"] = "ok"
     telemetry["personas"] = [p["name"] for p in parsed.get("audience_icp", [])]
     telemetry["raw_text_len"] = len(raw)
+    _cache.put("audience_designer", parsed, model, "v1", event_brief)
     if hasattr(response, "usage"):
         telemetry["usage"] = {
             "input_tokens": response.usage.input_tokens,

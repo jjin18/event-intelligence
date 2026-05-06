@@ -68,7 +68,7 @@ def _save_people(people: list[dict]) -> None:
 
 class DiscoverRequest(BaseModel):
     only_missing: bool = Field(True, description="Skip people who already have email or LinkedIn.")
-    limit: Optional[int] = Field(None, description="Max people to enrich this run (None = all).")
+    limit: Optional[int] = Field(25, description="Max people to enrich this run (defaults to top 25 to keep cost bounded).")
 
 
 @router.post("/contacts/discover")

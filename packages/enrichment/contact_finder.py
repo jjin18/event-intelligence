@@ -20,7 +20,10 @@ import re
 from typing import Any
 
 
-MODEL = "claude-sonnet-4-6"
+import os
+# Haiku is fine for "search the web for X's contact info" — ~10x cheaper.
+# Override with ANTHROPIC_CONTACT_MODEL=claude-sonnet-4-6 for higher recall.
+MODEL = os.environ.get("ANTHROPIC_CONTACT_MODEL", "claude-haiku-4-5-20251001")
 WEB_SEARCH_TOOL = {"type": "web_search_20250305", "name": "web_search"}
 BATCH_SIZE = 10
 
@@ -83,8 +86,8 @@ def _parse(raw: str) -> list[dict[str, Any]]:
 def discover_contacts(people: list[dict[str, Any]],
                       *,
                       model: str = MODEL,
-                      max_searches_per_batch: int = 8,
-                      max_tokens: int = 8000) -> tuple[int, dict[str, Any]]:
+                      max_searches_per_batch: int = 4,
+                      max_tokens: int = 4000) -> tuple[int, dict[str, Any]]:
     """Mutates `people` in-place. Returns (n_enriched, telemetry)."""
     telemetry: dict[str, Any] = {"status": "skipped", "model": model, "batches": 0,
                                  "people_total": len(people), "people_enriched": 0,
