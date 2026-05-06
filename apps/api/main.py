@@ -126,16 +126,19 @@ th{background:#fafafa}
 <h1>OneLoop</h1>
 <div class="sub">Plan a curated event end-to-end — find the right people, then organize the logistics.</div>
 
-<div class="tabs">
+<!-- GLOBAL INPUT — drives both tabs. Above the tab strip on purpose. -->
+<div id="warn"></div>
+<textarea id="brief" placeholder="e.g. 100-person crypto hackathon for builders, founders, ZK researchers in SF..."></textarea>
+<div><button id="go">Run pipeline</button> <span id="status" style="margin-left:12px;color:#888"></span></div>
+
+<!-- TABS — pure view-switchers; do not gate the input. -->
+<div class="tabs" style="margin-top:24px">
   <button class="tab active" data-tab="ei" onclick="switchTab('ei')">Event Intelligence</button>
   <button class="tab" data-tab="org" onclick="switchTab('org')">Organization</button>
 </div>
 
 <!-- TAB: Event Intelligence -->
 <div class="tab-panel active" id="panel-ei">
-<div id="warn"></div>
-<textarea id="brief" placeholder="e.g. 100-person crypto hackathon for builders, founders, ZK researchers in SF..."></textarea>
-<div><button id="go">Run pipeline</button> <span id="status" style="margin-left:12px;color:#888"></span></div>
 <div class="result" id="result"></div>
 </div>
 
