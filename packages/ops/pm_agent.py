@@ -43,7 +43,7 @@ def run(event_state: dict[str, Any]) -> dict[str, Any]:
     if not target:
         blockers.append("No RSVP target set")
     if not ranked:
-        blockers.append("No ranked prospects available — Event Intelligence may not have run yet")
+        blockers.append("No ranked prospects available — Eventful may not have run yet")
 
     one_week_timeline = [
         "T-7d: lock venue, finalize ICP, send first 30 invites",

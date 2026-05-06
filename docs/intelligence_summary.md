@@ -1,4 +1,4 @@
-# Event Intelligence Summary
+# Eventful Summary
 
 _Generated 2026-05-06T04:24:40.610344+00:00_
 

@@ -1,5 +1,5 @@
 """
-Pipeline agents for event intelligence.
+Pipeline agents for Eventful.
 
 Stages used by `run_intelligence`: objective → audience → sourcing →
 room_balance, plus rule-based scoring in `packages.scoring.attendee_fit`.

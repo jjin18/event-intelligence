@@ -1,4 +1,4 @@
--- Event Intelligence + Agentic Ops shared schema.
+-- Eventful + Agentic Ops shared schema.
 --
 -- Apply with:
 --   psql "$DATABASE_URL" -f infra/scripts/init_db.sql

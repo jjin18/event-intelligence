@@ -35,7 +35,7 @@ from apps.api.routes import run as run_routes
 from apps.api.routes import messages as messages_routes
 from apps.api.routes import organization as organization_routes
 
-app = FastAPI(title="Event Intelligence API", version="0.1.0")
+app = FastAPI(title="Eventful API", version="0.1.0")
 
 app.include_router(run_routes.router)
 app.include_router(messages_routes.router)
@@ -43,7 +43,7 @@ app.include_router(organization_routes.router)
 
 
 _INDEX_HTML = """<!doctype html>
-<html><head><meta charset="utf-8"><title>Event Intelligence</title>
+<html><head><meta charset="utf-8"><title>Eventful</title>
 <style>
 body{font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;max-width:880px;margin:40px auto;padding:0 20px;color:#222}
 h1{font-size:18px;margin:0 0 4px}
@@ -133,11 +133,11 @@ th{background:#fafafa}
 
 <!-- TABS — pure view-switchers; do not gate the input. -->
 <div class="tabs" style="margin-top:24px">
-  <button class="tab active" data-tab="ei" onclick="switchTab('ei')">Event Intelligence</button>
+  <button class="tab active" data-tab="ei" onclick="switchTab('ei')">Eventful</button>
   <button class="tab" data-tab="org" onclick="switchTab('org')">Organization</button>
 </div>
 
-<!-- TAB: Event Intelligence -->
+<!-- TAB: Eventful -->
 <div class="tab-panel active" id="panel-ei">
 <div class="result" id="result"></div>
 </div>
@@ -209,7 +209,7 @@ th{background:#fafafa}
   </div>
 
   <div id="org-banner" style="display:none;background:#eef7f0;border:1px solid #c5e3cd;color:#0a5d28;padding:8px 12px;border-radius:6px;margin-bottom:12px;font-size:13px;display:flex;justify-content:space-between;align-items:center;gap:8px">
-    <span><b>Auto-sourced from your Event Intelligence prompt.</b> <span id="org-banner-meta" style="color:#3d6f4d"></span></span>
+    <span><b>Auto-sourced from your Eventful prompt.</b> <span id="org-banner-meta" style="color:#3d6f4d"></span></span>
     <button class="btn-secondary" onclick="retryCategory(ORG_CAT)" title="Re-run search for the current category" style="padding:4px 10px;font-size:12px">🔄 Re-run this category</button>
   </div>
 
@@ -844,7 +844,7 @@ async def event_summary():
     """Return the latest extracted event metadata.
 
     Used by the Organization tab to auto-fire venues/caterers/sponsors searches
-    after an Event Intelligence run completes. Returns only the fields needed
+    after an Eventful run completes. Returns only the fields needed
     for org search query construction.
     """
     import json as _json

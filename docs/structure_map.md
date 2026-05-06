@@ -3,7 +3,7 @@
 **Repo note:** Empty placeholder modules under `packages/integrations/` were removed from this
 repository; add real connectors incrementally as tools. The rest of this file describes the
 Agentic Ops layer (branch: `feature/agentic-ops-mvp`)
-and the contract it shares with Event Intelligence (branch: `feature/event-intelligence-mvp`).
+and the contract it shares with Eventful (branch: `feature/event-intelligence-mvp`).
 
 ## 1. Repo areas touched
 
@@ -106,12 +106,12 @@ It does not overwrite `event`, `intelligence`, or `people`.
 - updates to `data/event_state.json` (only `ops`, `venues`, `sponsors`, `state`, `visibility`)
 - appends to `logs/agent_runs.jsonl`, `docs/agent_activity_log.md`
 
-**This branch consumes (from Event Intelligence):**
+**This branch consumes (from Eventful):**
 - `data/event_state.json` (especially `event`, `intelligence`, `people`)
 - `data/ranked_people.csv`
 - `docs/intelligence_summary.md`
 
-**Event Intelligence should NOT overwrite:**
+**Eventful should NOT overwrite:**
 - `event_state.ops`, `event_state.venues`, `event_state.sponsors`
 - the ops-owned CSVs and docs listed above
 - prior entries in `state.activity_log` (always append)

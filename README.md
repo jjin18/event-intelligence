@@ -1,4 +1,4 @@
-# Event Intelligence Platform
+# Eventful
 
 Prompt-driven event intelligence: derive **who belongs in the room**, score prospects, and emit
 structured artifacts. The product direction is **Cowork-like**—an orchestrator you talk to that
@@ -49,7 +49,7 @@ pip install -r apps/api/requirements.txt
 docker compose -f infra/docker/docker-compose.dev.yml up   # api + db + redis
 ```
 
-## Event Intelligence run
+## Eventful run
 
 ```bash
 cp .env.example .env && export $(grep -v '^#' .env | xargs)
