@@ -84,3 +84,28 @@ async def put_event_date(body: EventDateBody) -> dict:
 
     mutate_state(_apply)
     return {"ok": True, "event_date": iso, "event_end_time": end, "days_until": _days_until(iso)}
+
+
+class EventInfoBody(BaseModel):
+    """User-editable header fields. Only provided fields are touched —
+    omitting a field leaves the existing value alone so the popover can
+    submit just the field that changed."""
+    name: Optional[str] = None
+    city: Optional[str] = None
+    format: Optional[str] = None
+
+
+@router.put("/event/info")
+async def put_event_info(body: EventInfoBody) -> dict:
+    def _apply(state: dict) -> dict:
+        ev = state.setdefault("event", {})
+        if body.name is not None:
+            ev["name"] = body.name.strip()
+        if body.city is not None:
+            ev["city"] = body.city.strip()
+        if body.format is not None:
+            ev["format"] = body.format.strip()
+        return ev
+
+    ev = mutate_state(_apply)
+    return {"ok": True, "name": ev.get("name", ""), "city": ev.get("city", ""), "format": ev.get("format", "")}

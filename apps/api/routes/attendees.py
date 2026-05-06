@@ -228,24 +228,37 @@ async def confirm_attendee(body: ConfirmBody) -> dict:
 # -------- confirm HTML page --------
 
 _CONFIRM_PAGE_TEMPLATE = """<!doctype html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>RSVP</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
-:root{color-scheme:light}
-body{font:15px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;max-width:520px;margin:60px auto;padding:0 20px;color:#222}
-h1{font-size:22px;margin:0 0 8px;color:__COLOR__}
-.event{background:#f4f4f4;padding:14px 18px;border-radius:8px;margin:18px 0}
-.event div{margin:2px 0}
-.event b{color:#666;font-weight:500}
-button{padding:14px 22px;font:inherit;font-size:15px;border:0;border-radius:6px;cursor:pointer;margin:6px 4px 0 0}
-.yes{background:#0a7d2c;color:#fff}
-.no{background:#fff;color:#c33;border:1px solid #c33}
-.muted{color:#888;font-size:13px;margin-top:14px}
+:root{--bg:#FFFFFF;--bg-alt:#FAFAFA;--bg-soft:#F5F5F5;--text:#0A0A0A;--text-2:#525252;--text-3:#A3A3A3;--border:#EAEAEA;--font:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;--t:150ms ease;color-scheme:light}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{font:400 15px/1.55 var(--font);font-variant-numeric:tabular-nums;color:var(--text);background:var(--bg);min-height:100vh;display:flex;align-items:flex-start;justify-content:center;padding:80px 20px}
+.card{max-width:460px;width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:32px;box-shadow:0 1px 3px rgba(0,0,0,0.04)}
+h1{font-size:24px;font-weight:600;margin:0 0 6px;letter-spacing:-0.01em;color:__COLOR__}
+.event-block{background:var(--bg-soft);padding:14px 18px;border-radius:6px;margin:18px 0}
+.event-block div{margin:3px 0;font-size:14px}
+.event-block b{color:var(--text-2);font-weight:500}
+.muted{color:var(--text-2);font-size:13px;margin-top:18px}
+button{font:500 14px var(--font);padding:12px 22px;border:1px solid transparent;border-radius:6px;cursor:pointer;transition:all var(--t);margin:8px 6px 0 0;background:transparent;color:var(--text)}
+button:disabled{opacity:.5;cursor:not-allowed}
+.yes{background:var(--text);color:var(--bg);border-color:var(--text)}
+.yes:hover:not(:disabled){background:#262626}
+.no{background:var(--bg);color:var(--text);border-color:var(--text)}
+.no:hover:not(:disabled){background:var(--bg-alt)}
+@keyframes fadeIn{from{opacity:0;transform:translateY(2px)}to{opacity:1;transform:translateY(0)}}
+.card{animation:fadeIn var(--t)}
 </style></head><body>
+<main class="card">
 <h1>__TITLE__</h1>
 __BODY__
 <div style="margin-top:18px">__BUTTONS__</div>
 <div class="muted">No login required — this link is unique to you.</div>
+</main>
 <script>
 const TOKEN = "__TOKEN__";
 async function rsvp(status){
@@ -261,9 +274,9 @@ async function rsvp(status){
     const msg = data.already_recorded
       ? ('Status already recorded as ' + (data.previous_status || data.status) + '.')
       : (status === 'Confirmed' ? "You're confirmed — thanks!" : "Got it — sorry you can't make it.");
-    document.body.innerHTML = '<h1 style="color:#0a7d2c">Thanks!</h1><p>' + msg + '</p>';
+    document.querySelector('.card').innerHTML = '<h1>Thanks!</h1><p style="color:var(--text-2);font-size:14px">' + msg + '</p>';
   }catch(e){
-    document.body.innerHTML = '<h1 style="color:#c33">Something went wrong</h1><p>' + e.message + '</p>';
+    document.querySelector('.card').innerHTML = '<h1>Something went wrong</h1><p style="color:var(--text-2);font-size:14px">' + e.message + '</p>';
   }
 }
 </script></body></html>"""
