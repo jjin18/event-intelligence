@@ -337,7 +337,7 @@ table.list tr:hover .row-actions{opacity:1}
     <span class="sep">·</span>
     <span class="meta-link" id="meta-format" data-empty="true" onclick="openInfoPopover('format',event)">Add format</span>
     <span class="sep">·</span>
-    <span class="dim" id="meta-size">— people</span>
+    <span class="meta-link" id="meta-size" data-empty="true" onclick="openInfoPopover('target_size',event)">— people</span>
   </div>
   <div class="stat-tiles">
     <div class="stat-tile">
@@ -608,13 +608,13 @@ let ATT_STATE = {attendees:[],summary:{total:0,invited:0,confirmed:0,declined:0,
 let ATT_FILTER = 'all';
 let ATT_POLL_TIMER = null;
 
-const DEFAULT_TEMPLATE = "Hi {first_name},\n\nI'm putting together {event} on {event_date} and would love for you to come — hand-picking other {persona}s building at companies like {company}.\n\nConfirm here: {confirm_link}\n\nThanks!";
+const DEFAULT_TEMPLATE = "Hi {first_name},\\n\\nI'm putting together {event} on {event_date} and would love for you to come — hand-picking other {persona}s building at companies like {company}.\\n\\nConfirm here: {confirm_link}\\n\\nThanks!";
 
 // ---------- Health banner ----------
 fetch('/health').then(r=>r.json()).then(h=>{
   if(!h.anthropic_key_set){
     document.getElementById('warn').innerHTML =
-      '<div class="banner banner-error" style="margin-top:14px">ANTHROPIC_API_KEY is not set. The curator will skip and you\'ll get 0 prospects. Add it to <code style="background:var(--bg-soft);padding:1px 5px;border-radius:3px">.env</code> and restart.</div>';
+      '<div class="banner banner-error" style="margin-top:14px">ANTHROPIC_API_KEY is not set. The curator will skip and you\\'ll get 0 prospects. Add it to <code style="background:var(--bg-soft);padding:1px 5px;border-radius:3px">.env</code> and restart.</div>';
   }
 });
 
@@ -775,8 +775,10 @@ function refreshHeader(){
   else { fmtEl.textContent = 'Add format'; fmtEl.dataset.empty = 'true'; }
 
   // Size
-  TARGET_SIZE = +(s.target_size||0) || 0;
-  document.getElementById('meta-size').textContent = TARGET_SIZE ? `${TARGET_SIZE} people` : '— people';
+  TARGET_SIZE = +((e.target_size!=null?e.target_size:s.target_size)||0) || 0;
+  const sizeEl = document.getElementById('meta-size');
+  sizeEl.textContent = TARGET_SIZE ? `${TARGET_SIZE} people` : '— people';
+  sizeEl.dataset.empty = TARGET_SIZE ? 'false' : 'true';
 
   // Days tile
   const daysEl = document.getElementById('stat-days');
@@ -903,21 +905,29 @@ async function saveDatePopover(){
   refreshAllStats();
 }
 
-// ---------- Info popover (city, format) ----------
+// ---------- Info popover (city, format, target_size) ----------
 let INFO_POP_FIELD = '';
 function openInfoPopover(field, ev){
   ev && ev.stopPropagation();
   INFO_POP_FIELD = field;
   const pop = document.getElementById('info-popover');
-  const target = ev ? ev.currentTarget : document.getElementById('meta-'+field);
+  const target = ev ? ev.currentTarget : document.getElementById('meta-'+(field==='target_size'?'size':field));
   const rect = target.getBoundingClientRect();
   pop.style.top = (window.scrollY + rect.bottom + 6) + 'px';
   pop.style.left = (window.scrollX + rect.left) + 'px';
-  const labels = {city:'Location', format:'Format'};
+  const labels = {city:'Location', format:'Format', target_size:'Target size'};
   document.getElementById('info-popover-label').textContent = labels[field] || field;
   const inp = document.getElementById('info-popover-input');
-  inp.value = (EVENT_META[field] || '');
-  inp.placeholder = field === 'city' ? 'San Francisco' : 'hackathon, dinner, summit…';
+  if(field === 'target_size'){
+    inp.type = 'number'; inp.min = '0'; inp.step = '1';
+    inp.value = (EVENT_META.target_size || '');
+    inp.placeholder = '100';
+  } else {
+    inp.type = 'text';
+    inp.removeAttribute('min'); inp.removeAttribute('step');
+    inp.value = (EVENT_META[field] || '');
+    inp.placeholder = field === 'city' ? 'San Francisco' : 'hackathon, dinner, summit…';
+  }
   pop.classList.add('show');
   inp.focus();
   inp.select();
@@ -930,7 +940,9 @@ function closeInfoPopoverOnOutside(e){
 }
 function closeInfoPopover(){ document.getElementById('info-popover').classList.remove('show'); }
 async function saveInfoPopover(){
-  const val = document.getElementById('info-popover-input').value.trim();
+  const raw = document.getElementById('info-popover-input').value;
+  let val = (raw || '').trim();
+  if(INFO_POP_FIELD === 'target_size') val = parseInt(val || '0', 10) || 0;
   await fetch('/event/info',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({[INFO_POP_FIELD]:val})});
   closeInfoPopover();
   loadEventMeta();

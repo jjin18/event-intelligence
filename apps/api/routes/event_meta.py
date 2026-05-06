@@ -41,15 +41,17 @@ def _days_until(iso: str) -> Optional[int]:
 async def get_event() -> dict:
     state = read_state()
     iso = state.get("event_date") or ""
+    ev = state.get("event") or {}
     return {
         "ok": True,
         "event_date": iso,
         "event_end_time": state.get("event_end_time"),
         "days_until": _days_until(iso),
         "is_past": (_days_until(iso) is not None and _days_until(iso) < 0),
-        "name": (state.get("event") or {}).get("name") or "",
-        "city": (state.get("event") or {}).get("city") or "",
-        "format": (state.get("event") or {}).get("format") or "",
+        "name": ev.get("name") or "",
+        "city": ev.get("city") or "",
+        "format": ev.get("format") or "",
+        "target_size": ev.get("target_size") or 0,
     }
 
 
@@ -93,6 +95,7 @@ class EventInfoBody(BaseModel):
     name: Optional[str] = None
     city: Optional[str] = None
     format: Optional[str] = None
+    target_size: Optional[int] = None
 
 
 @router.put("/event/info")
@@ -105,7 +108,15 @@ async def put_event_info(body: EventInfoBody) -> dict:
             ev["city"] = body.city.strip()
         if body.format is not None:
             ev["format"] = body.format.strip()
+        if body.target_size is not None:
+            ev["target_size"] = max(0, int(body.target_size))
         return ev
 
     ev = mutate_state(_apply)
-    return {"ok": True, "name": ev.get("name", ""), "city": ev.get("city", ""), "format": ev.get("format", "")}
+    return {
+        "ok": True,
+        "name": ev.get("name", ""),
+        "city": ev.get("city", ""),
+        "format": ev.get("format", ""),
+        "target_size": ev.get("target_size", 0),
+    }
