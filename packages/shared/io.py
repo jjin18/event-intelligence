@@ -1,4 +1,4 @@
-"""Simple file IO helpers for Event Intelligence."""
+"""Simple file IO helpers for Eventful."""
 from __future__ import annotations
 
 import csv

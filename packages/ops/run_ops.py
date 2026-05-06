@@ -27,7 +27,7 @@ def _seed_event_state_if_missing() -> dict:
         return load_event_state(EVENT_STATE_PATH)
     print(
         "[run_ops] data/event_state.json not found.\n"
-        "  Run the Event Intelligence pipeline first to produce event_state.json + ranked_people.csv.\n"
+        "  Run the Eventful pipeline first to produce event_state.json + ranked_people.csv.\n"
         "  Falling back to a minimal sample so ops can still run end-to-end.",
         file=sys.stderr,
     )
@@ -161,7 +161,7 @@ def main() -> int:
 STRUCTURE_MAP = """# Structure Map — Agentic Ops
 
 This document is the map of the Agentic Ops layer (branch: `feature/agentic-ops-mvp`)
-and the contract it shares with Event Intelligence (branch: `feature/event-intelligence-mvp`).
+and the contract it shares with Eventful (branch: `feature/event-intelligence-mvp`).
 
 ## 1. Repo areas touched
 
@@ -264,12 +264,12 @@ It does not overwrite `event`, `intelligence`, or `people`.
 - updates to `data/event_state.json` (only `ops`, `venues`, `sponsors`, `state`, `visibility`)
 - appends to `logs/agent_runs.jsonl`, `docs/agent_activity_log.md`
 
-**This branch consumes (from Event Intelligence):**
+**This branch consumes (from Eventful):**
 - `data/event_state.json` (especially `event`, `intelligence`, `people`)
 - `data/ranked_people.csv`
 - `docs/intelligence_summary.md`
 
-**Event Intelligence should NOT overwrite:**
+**Eventful should NOT overwrite:**
 - `event_state.ops`, `event_state.venues`, `event_state.sponsors`
 - the ops-owned CSVs and docs listed above
 - prior entries in `state.activity_log` (always append)

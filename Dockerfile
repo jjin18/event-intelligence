@@ -1,6 +1,6 @@
 # Top-level Dockerfile that Railway / Render / Fly.io / Cloud Run auto-detect.
 #
-# Builds the Event Intelligence API. Local dev still uses
+# Builds the Eventful API. Local dev still uses
 # infra/docker/docker-compose.dev.yml; that compose file overrides the CMD
 # with --reload and mounts the repo as a volume.
 

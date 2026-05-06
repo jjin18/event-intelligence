@@ -1,4 +1,4 @@
-"""End-to-end Event Intelligence pipeline.
+"""End-to-end Eventful pipeline.
 
 Run with:
     python -m packages.agents.run_intelligence
@@ -68,7 +68,7 @@ def _write_intelligence_summary(state: dict[str, Any], path: Path) -> None:
     open_qs = state.get("state", {}).get("open_questions", [])
 
     lines = [
-        "# Event Intelligence Summary",
+        "# Eventful Summary",
         "",
         f"_Generated {datetime.now(timezone.utc).isoformat()}_",
         "",
@@ -286,7 +286,7 @@ def run_pipeline(
     if not quiet:
         print()
         print("=" * 60)
-        print("Event Intelligence pipeline complete.")
+        print("Eventful pipeline complete.")
         print("=" * 60)
         print(f"Database              : {db_status}")
         print(f"Prospects scored      : {len(ranked)}")

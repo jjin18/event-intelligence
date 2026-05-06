@@ -1,6 +1,6 @@
 """Canonical shared event state schema for OneLoop.
 
-This module defines the contract between the Event Intelligence branch and the
+This module defines the contract between the Eventful branch and the
 Agentic Ops branch. Both branches read/write `data/event_state.json` using this
 shape. Keep additions backward-compatible: prefer adding new optional keys over
 renaming existing ones.

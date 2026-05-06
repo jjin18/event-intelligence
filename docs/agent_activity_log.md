@@ -1,6 +1,6 @@
 # Agent Activity Log
 
-Human-readable trace of all agent runs in the Event Intelligence branch.
+Human-readable trace of all agent runs in the Eventful branch.
 
 ## 2026-05-05T22:48:28.061341+00:00 — objective_agent (`objective_agent-c390b021`)
 

@@ -112,7 +112,7 @@ def log_agent_run(
 def append_activity_log_markdown(entry: dict[str, Any], md_path: str = ACTIVITY_LOG_MD) -> None:
     p = _ensure_parent(md_path)
     if not p.exists():
-        p.write_text("# Agent Activity Log\n\nHuman-readable trace of all agent runs in the Event Intelligence branch.\n\n")
+        p.write_text("# Agent Activity Log\n\nHuman-readable trace of all agent runs in the Eventful branch.\n\n")
 
     lines = [
         f"## {entry['timestamp']} — {entry['agent_name']} (`{entry['run_id']}`)\n",
