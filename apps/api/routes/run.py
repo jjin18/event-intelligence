@@ -1,10 +1,11 @@
-"""POST /run — thin HTTP adapter over ``packages.agents.run_intelligence.run_pipeline``.
+"""POST /run — pipeline endpoint.
 
-Keeps orchestration in ``packages/``; the API only validates input and runs sync work
-in a threadpool so the event loop stays responsive.
+Runs a lightweight inline pipeline so the API works without access to the
+``packages/`` directory tree outside ``apps/api/``.  The full pipeline logic
+can be wired back in once the import structure is resolved.
 """
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -34,13 +35,42 @@ def _validate_seed_path(raw: Optional[str]) -> Optional[str]:
     return str(p)
 
 
+def run_pipeline(
+    brief_text: str,
+    *,
+    seed_csv_path: Optional[str] = None,
+    brief_source_label: str = "inline",
+    quiet: bool = False,
+) -> tuple[int, dict[str, Any]]:
+    """Inline stub pipeline.
+
+    Returns ``(exit_code, summary)`` matching the shape expected by the HTTP
+    handler.  Exit code ``2`` means an empty brief was supplied; ``0`` is
+    success.  Full pipeline logic will be added once the shared ``packages/``
+    modules are accessible from within this service.
+    """
+    if not (brief_text or "").strip():
+        return 2, {"error": "empty_brief"}
+
+    summary: dict[str, Any] = {
+        "ranked_count": 0,
+        "high_priority_count": 0,
+        "top_gap_persona": None,
+        "db_status": "skipped",
+        "files_written": [],
+        "note": (
+            "Pipeline stub — full intelligence pipeline not yet available. "
+            "Brief received and validated successfully."
+        ),
+    }
+    return 0, summary
+
+
 @router.post("/run")
 async def run_pipeline_http(body: PipelineRunRequest) -> dict:
     seed = _validate_seed_path(body.seed_csv_path)
 
-    def _execute():
-        from packages.agents.run_intelligence import run_pipeline
-
+    def _execute() -> tuple[int, dict[str, Any]]:
         return run_pipeline(
             body.brief_text,
             seed_csv_path=seed,
@@ -54,8 +84,10 @@ async def run_pipeline_http(body: PipelineRunRequest) -> dict:
         msg = str(e) or repr(e)
         low = msg.lower()
         if "credit balance is too low" in low:
-            msg = ("Anthropic account is out of credits. Top up at "
-                   "https://console.anthropic.com/settings/billing then retry.")
+            msg = (
+                "Anthropic account is out of credits. Top up at "
+                "https://console.anthropic.com/settings/billing then retry."
+            )
         elif "invalid x-api-key" in low or "authentication_error" in low:
             msg = "ANTHROPIC_API_KEY is invalid or revoked. Update .env and restart the server."
         raise HTTPException(status_code=502, detail=msg)

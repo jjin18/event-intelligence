@@ -1,20 +1,16 @@
 import logging
 import os
-import sys
 from pathlib import Path
 
 from fastapi import FastAPI
 
-# Import ``packages.*`` when cwd is apps/api (docker or local uvicorn from api folder).
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
-
-# Auto-load .env from repo root so the API doesn't silently miss
-# ANTHROPIC_API_KEY / DATABASE_URL when started via `uvicorn apps.api.main:app`.
+# Auto-load .env if present alongside (or above) this file.
 try:
     from dotenv import load_dotenv
-    _env_path = _REPO_ROOT / ".env"
+    _env_path = Path(__file__).resolve().parent / ".env"
+    if not _env_path.exists():
+        # fall back one level up (repo root when running locally)
+        _env_path = Path(__file__).resolve().parents[2] / ".env"
     if _env_path.exists():
         load_dotenv(_env_path, override=True)
 except ImportError:
@@ -23,15 +19,13 @@ except ImportError:
 _log = logging.getLogger("event_intelligence.api")
 if not os.environ.get("ANTHROPIC_API_KEY"):
     _log.warning(
-        "ANTHROPIC_API_KEY is not set — the LLM curator and audience designer "
-        "will fall back to generic offline behavior (0 curated prospects). "
-        "Add it to %s or your shell env to enable live curation.",
-        _REPO_ROOT / ".env",
+        "ANTHROPIC_API_KEY is not set — pipeline will return stub results. "
+        "Add it to your environment or a .env file and restart the server.",
     )
 
 from fastapi.responses import HTMLResponse, FileResponse
 
-from apps.api.routes import run as run_routes
+from routes import run as run_routes
 
 app = FastAPI(title="Event Intelligence API", version="0.1.0")
 
@@ -129,11 +123,14 @@ async def index():
     return _INDEX_HTML
 
 
+_DATA_DIR = Path(__file__).resolve().parent / "data"
+
+
 @app.get("/people")
 async def people():
     """Return the most recent ranked_people.csv as JSON."""
     import csv as _csv
-    csv_path = _REPO_ROOT / "data" / "ranked_people.csv"
+    csv_path = _DATA_DIR / "ranked_people.csv"
     if not csv_path.exists():
         return {"people": []}
     with csv_path.open() as f:
@@ -144,7 +141,7 @@ async def people():
 @app.get("/download/ranked_people.csv")
 async def download_ranked():
     """Stream the most recent ranked_people.csv as a file download."""
-    csv_path = _REPO_ROOT / "data" / "ranked_people.csv"
+    csv_path = _DATA_DIR / "ranked_people.csv"
     if not csv_path.exists():
         return {"error": "no ranked CSV yet — run the pipeline first"}
     return FileResponse(
@@ -157,7 +154,7 @@ async def download_ranked():
 @app.get("/download/event_state.json")
 async def download_state():
     """Stream the most recent event_state.json as a file download."""
-    p = _REPO_ROOT / "data" / "event_state.json"
+    p = _DATA_DIR / "event_state.json"
     if not p.exists():
         return {"error": "no event_state yet — run the pipeline first"}
     return FileResponse(
