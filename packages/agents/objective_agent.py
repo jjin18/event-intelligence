@@ -7,6 +7,7 @@ fills size/city with lightweight heuristics.
 from __future__ import annotations
 
 import re
+from datetime import date, datetime, timedelta
 from typing import Any, Optional
 
 from packages.agents.intent_extractor import extract_event_intent
@@ -53,6 +54,103 @@ def _extract_event_type(text: str) -> str:
     if "meetup" in t or "community" in t:
         return "curated tech community event"
     return "curated tech community event"
+
+
+_MONTHS = {
+    "jan": 1, "january": 1, "feb": 2, "february": 2, "mar": 3, "march": 3,
+    "apr": 4, "april": 4, "may": 5, "jun": 6, "june": 6, "jul": 7, "july": 7,
+    "aug": 8, "august": 8, "sep": 9, "sept": 9, "september": 9, "oct": 10,
+    "october": 10, "nov": 11, "november": 11, "dec": 12, "december": 12,
+}
+_WEEKDAYS = {
+    "monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
+    "friday": 4, "saturday": 5, "sunday": 6,
+}
+
+
+def _next_weekday(target_idx: int, base: date, force_next_week: bool = False) -> date:
+    """Return the next date with weekday == target_idx, after ``base``.
+
+    If today already matches and force_next_week is False, returns today + 7
+    (event organizers saying "Saturday" on Saturday rarely mean today).
+    """
+    diff = (target_idx - base.weekday()) % 7
+    if diff == 0 or force_next_week:
+        diff = 7 if force_next_week or diff == 0 else diff
+    return base + timedelta(days=diff)
+
+
+def _extract_date(text: str, today: Optional[date] = None) -> str:
+    """Best-effort date extraction from a free-form brief.
+
+    Returns an ISO 8601 date string ("YYYY-MM-DD") if a date is found,
+    otherwise an empty string. Designed to handle the common phrasings
+    organizers use ("next Saturday", "May 17", "5/17/2026", "2026-05-17",
+    "tomorrow") without adding a dateutil dependency.
+    """
+    if not text:
+        return ""
+    today = today or date.today()
+    t = text.lower()
+
+    # Relative day shortcuts
+    if re.search(r"\btomorrow\b", t):
+        return (today + timedelta(days=1)).isoformat()
+    if re.search(r"\btoday\b", t):
+        return today.isoformat()
+
+    # "next/this <weekday>"
+    m = re.search(r"\b(this|next)\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b", t)
+    if m:
+        modifier = m.group(1)
+        wd = _WEEKDAYS[m.group(2)]
+        return _next_weekday(wd, today, force_next_week=(modifier == "next")).isoformat()
+
+    # ISO format YYYY-MM-DD
+    m = re.search(r"\b(20\d{2})-(\d{1,2})-(\d{1,2})\b", text)
+    if m:
+        try:
+            return date(int(m.group(1)), int(m.group(2)), int(m.group(3))).isoformat()
+        except ValueError:
+            pass
+
+    # US format M/D/YYYY or M/D/YY
+    m = re.search(r"\b(\d{1,2})/(\d{1,2})/(\d{2,4})\b", text)
+    if m:
+        try:
+            mo, day, yr = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            if yr < 100:
+                yr += 2000
+            return date(yr, mo, day).isoformat()
+        except ValueError:
+            pass
+
+    # "Month D[, YYYY]"  e.g. "May 17", "May 17, 2026", "Jan 5"
+    m = re.search(
+        r"\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|"
+        r"aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+"
+        r"(\d{1,2})(?:[,\s]+(20\d{2}))?\b",
+        t,
+    )
+    if m:
+        try:
+            mo = _MONTHS[m.group(1)]
+            day = int(m.group(2))
+            yr = int(m.group(3)) if m.group(3) else today.year
+            d = date(yr, mo, day)
+            # If no year given and the date already passed this year, roll forward.
+            if not m.group(3) and d < today:
+                d = date(yr + 1, mo, day)
+            return d.isoformat()
+        except (ValueError, KeyError):
+            pass
+
+    # Bare weekday name ("on Saturday")
+    m = re.search(r"\b(?:on\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b", t)
+    if m:
+        return _next_weekday(_WEEKDAYS[m.group(1)], today).isoformat()
+
+    return ""
 
 
 def _coerce_size(value: Any, brief: str, default: int) -> int:
@@ -106,6 +204,11 @@ def run(brief: str, constraints: Optional[dict[str, Any]] = None,
 
     event_name = (intent.get("event_name") or "").strip()
 
+    # Pre-fill event date from the brief when the organizer wrote one.
+    # Lands on the new top-level event_state["event_date"] (kept distinct
+    # from the legacy event_state["event"]["date"] which is unrelated state).
+    event_date_iso = (intent.get("event_date") or "").strip() or _extract_date(brief)
+
     success_metrics = [
         f"{target_size} RSVPs",
         f"{int(target_size * 0.6)}-{int(target_size * 0.7)} actual attendees",
@@ -136,6 +239,10 @@ def run(brief: str, constraints: Optional[dict[str, Any]] = None,
         ev["city"] = city
         ev["format"] = event_type
         ev["success_metrics"] = success_metrics
+        # Only pre-fill event_date if extraction succeeded AND the user hasn't
+        # already set one (e.g. via the date picker between runs).
+        if event_date_iso and not (event_state.get("event_date") or "").strip():
+            event_state["event_date"] = event_date_iso
         state_meta = event_state.setdefault("state", {})
         state_meta.setdefault("open_questions", []).extend(open_questions)
 

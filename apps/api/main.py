@@ -34,12 +34,18 @@ from fastapi.responses import HTMLResponse, FileResponse
 from apps.api.routes import run as run_routes
 from apps.api.routes import messages as messages_routes
 from apps.api.routes import organization as organization_routes
+from apps.api.routes import event_meta as event_meta_routes
+from apps.api.routes import budget as budget_routes
+from apps.api.routes import attendees as attendees_routes
 
 app = FastAPI(title="Eventful API", version="0.1.0")
 
 app.include_router(run_routes.router)
 app.include_router(messages_routes.router)
 app.include_router(organization_routes.router)
+app.include_router(event_meta_routes.router)
+app.include_router(budget_routes.router)
+app.include_router(attendees_routes.router)
 
 
 _INDEX_HTML = """<!doctype html>
@@ -121,6 +127,48 @@ th{background:#fafafa}
 .saved-pill{font-size:11px;background:#fef7d8;padding:2px 8px;border-radius:10px;color:#a36c00}
 .btn-star{background:none;border:0;cursor:pointer;font-size:16px;padding:0 4px;color:#bbb}
 .btn-star.saved{color:#f5a623}
+/* Budget tab */
+.bd-header{font-size:13px;color:#666;margin-bottom:14px}
+.bd-totals{margin-bottom:18px}
+.bd-bar-wrap{margin-bottom:20px}
+.bd-bar{height:14px;width:100%;background:#eee;border-radius:7px;overflow:hidden}
+.bd-bar-fill{height:100%;background:#0a7d2c;transition:width .25s ease,background .25s ease;width:0%}
+.bd-bar-fill.warn{background:#a36c00}
+.bd-bar-fill.over{background:#c33}
+.bd-bar-text{margin-top:6px;font-size:13px;color:#444}
+.bd-cat{border:1px solid #eee;border-radius:6px;margin-bottom:10px;background:#fff}
+.bd-cat summary{padding:10px 14px;cursor:pointer;font-weight:600;display:flex;justify-content:space-between;align-items:center;list-style:none}
+.bd-cat summary::-webkit-details-marker{display:none}
+.bd-cat .cat-meta{font-size:12px;color:#888;font-weight:400}
+.bd-cat .cat-body{padding:6px 14px 14px;border-top:1px solid #f4f4f4}
+.bd-li-row{display:grid;grid-template-columns:1fr 110px 130px 60px;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #f4f4f4;font-size:13px}
+.bd-li-row:last-child{border-bottom:0}
+.bd-li-name{font-size:13px}
+.bd-li-name .src{font-size:11px;color:#888;margin-left:6px}
+.bd-li-cost input,.bd-li-status select{width:100%;padding:4px 6px;font:inherit;font-size:12px;border:1px solid #ddd;border-radius:3px}
+.bd-li-del{background:none;border:0;cursor:pointer;color:#bbb;font-size:14px}
+.bd-li-del:hover{color:#c33}
+.bd-add-form{display:grid;grid-template-columns:1fr 110px 80px;gap:8px;margin-top:8px}
+.bd-add-form input{padding:5px 7px;font:inherit;font-size:12px;border:1px solid #ddd;border-radius:3px}
+.bd-add-form button{font-size:12px;padding:4px 10px}
+.bd-sponsor{margin-top:18px;padding:12px;background:#fafafa;border-radius:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+/* Attendees tab */
+.att-header{font-size:13px;margin-bottom:14px}
+.att-add{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:6px}
+#att-list th{background:#fafafa;font-size:12px;color:#666;text-transform:uppercase;letter-spacing:.4px}
+#att-list td{padding:6px 8px;border-bottom:1px solid #f4f4f4;vertical-align:middle}
+#att-list select{padding:3px 6px;font:inherit;font-size:12px;border:1px solid #ddd;border-radius:3px}
+#att-list input.att-notes{width:100%;padding:3px 6px;font:inherit;font-size:12px;border:1px solid transparent;border-radius:3px;background:transparent}
+#att-list input.att-notes:focus{border-color:#ddd;background:#fff;outline:0}
+.att-status-Confirmed{color:#0a7d2c;font-weight:600}
+.att-status-Declined{color:#888}
+.att-status-Attended{color:#0a7d2c}
+.att-status-Invited{color:#a36c00}
+.att-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:middle}
+.att-dot-Invited{background:#bbb}
+.att-dot-Confirmed{background:#0a7d2c}
+.att-dot-Declined{background:#c33}
+.att-dot-Attended{background:#0a7d2c}
 </style></head>
 <body>
 <h1>OneLoop</h1>
@@ -131,10 +179,22 @@ th{background:#fafafa}
 <textarea id="brief" placeholder="e.g. 100-person crypto hackathon for builders, founders, ZK researchers in SF..."></textarea>
 <div><button id="go">Run pipeline</button> <span id="status" style="margin-left:12px;color:#888"></span></div>
 
+<!-- EVENT DATE — anchors Budget/Attendees headers and the {event_date} message placeholder. -->
+<div class="event-date-row" style="margin-top:18px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+  <label for="ev-date" style="font-size:13px;color:#444">Event date</label>
+  <input id="ev-date" type="date" style="padding:6px 8px;font:inherit;font-size:13px;border:1px solid #ccc;border-radius:4px">
+  <input id="ev-start" type="time" style="padding:6px 8px;font:inherit;font-size:13px;border:1px solid #ccc;border-radius:4px" title="Start time (optional)">
+  <span style="font-size:12px;color:#888">to</span>
+  <input id="ev-end" type="time" style="padding:6px 8px;font:inherit;font-size:13px;border:1px solid #ccc;border-radius:4px" title="End time (optional)">
+  <span id="ev-date-status" style="font-size:12px;color:#888;margin-left:6px"></span>
+</div>
+
 <!-- TABS — pure view-switchers; do not gate the input. -->
 <div class="tabs" style="margin-top:24px">
   <button class="tab active" data-tab="ei" onclick="switchTab('ei')">Eventful</button>
   <button class="tab" data-tab="org" onclick="switchTab('org')">Organization</button>
+  <button class="tab" data-tab="budget" onclick="switchTab('budget')">Budget</button>
+  <button class="tab" data-tab="attendees" onclick="switchTab('attendees')">Attendees</button>
 </div>
 
 <!-- TAB: Eventful -->
@@ -221,6 +281,55 @@ th{background:#fafafa}
   <div class="org-cards" id="org-results"></div>
 </div>
 
+<!-- TAB: Budget -->
+<div class="tab-panel" id="panel-budget">
+  <div class="bd-header">
+    <span id="bd-event-line" style="color:#666"></span>
+  </div>
+  <div class="bd-totals">
+    <label style="display:block;font-size:12px;color:#666;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px">What's your total budget?</label>
+    <div style="display:flex;align-items:center;gap:8px">
+      <span style="font-size:18px;color:#888">$</span>
+      <input id="bd-total" type="number" min="0" step="100" placeholder="10000" style="width:160px;padding:8px;font:inherit;font-size:15px;border:1px solid #ccc;border-radius:4px">
+      <button class="btn-secondary" onclick="saveBudgetTotal()" style="padding:6px 12px">Save</button>
+      <span id="bd-total-status" style="font-size:12px;color:#888"></span>
+    </div>
+  </div>
+
+  <div class="bd-bar-wrap">
+    <div class="bd-bar" id="bd-bar"><div class="bd-bar-fill" id="bd-bar-fill"></div></div>
+    <div class="bd-bar-text" id="bd-bar-text"></div>
+  </div>
+
+  <div id="bd-categories"></div>
+
+  <div class="bd-sponsor">
+    <label style="font-size:13px;color:#444">Sponsor contributions</label>
+    <span style="color:#888">$</span>
+    <input id="bd-sponsor" type="number" min="0" step="100" placeholder="0" style="width:120px;padding:6px;font:inherit;font-size:13px;border:1px solid #ccc;border-radius:4px">
+    <button class="btn-secondary" onclick="saveSponsorIncome()" style="padding:4px 10px;font-size:12px">Save</button>
+    <span style="font-size:12px;color:#888">subtracts from total spent</span>
+  </div>
+</div>
+
+<!-- TAB: Attendees -->
+<div class="tab-panel" id="panel-attendees">
+  <div class="att-header" id="att-header" style="color:#666"></div>
+  <div class="att-add">
+    <input id="att-name" placeholder="Name" style="padding:7px;font:inherit;font-size:13px;border:1px solid #ccc;border-radius:4px">
+    <input id="att-company" placeholder="Company" style="padding:7px;font:inherit;font-size:13px;border:1px solid #ccc;border-radius:4px">
+    <input id="att-email" placeholder="Email (optional)" style="padding:7px;font:inherit;font-size:13px;border:1px solid #ccc;border-radius:4px">
+    <button onclick="addAttendee()" style="padding:7px 14px">Add attendee</button>
+    <span id="att-add-status" style="font-size:12px;color:#888"></span>
+  </div>
+  <div id="att-list-wrap">
+    <table id="att-list" style="width:100%;border-collapse:collapse;font-size:13px;margin-top:14px">
+      <thead><tr><th style="text-align:left;padding:6px 8px;border-bottom:1px solid #ddd">Status</th><th style="text-align:left;padding:6px 8px;border-bottom:1px solid #ddd">Name</th><th style="text-align:left;padding:6px 8px;border-bottom:1px solid #ddd">Company</th><th style="text-align:left;padding:6px 8px;border-bottom:1px solid #ddd">Notes</th></tr></thead>
+      <tbody id="att-rows"></tbody>
+    </table>
+  </div>
+</div>
+
 <!-- Outreach modal -->
 <div class="modal-bg" id="msg-modal" onclick="if(event.target===this)closeMsg()">
   <div class="modal">
@@ -292,6 +401,9 @@ btn.onclick = async () => {
     const peopleResp = await fetch('/people');
     const people = (await peopleResp.json()).people || [];
     renderResult(data, people);
+    // Refresh event metadata so the date picker reflects any date the
+    // objective_agent extracted from the brief.
+    loadEventMeta();
     // Auto-fire org searches in parallel — don't await; people table is
     // already on screen and org cards stream in to their pills as each
     // /org/search promise resolves.
@@ -369,7 +481,7 @@ async function discoverContacts(){
 
 // ---------- Message modal ----------
 let ALL_PEOPLE = [], EVENT_SUMMARY = {}, MSG_FOCUS_NAME = '';
-const DEFAULT_TEMPLATE = "Hi {first_name},\\n\\nI'm putting together {event} and would love for you to come — hand-picking other {persona}s building at companies like {company}.\\n\\nIf the timing works, reply and I'll send details.\\n\\nThanks!";
+const DEFAULT_TEMPLATE = "Hi {first_name},\\n\\nI'm putting together {event} on {event_date} and would love for you to come — hand-picking other {persona}s building at companies like {company}.\\n\\nConfirm here: {confirm_link}\\n\\nThanks!";
 
 function openMsg(name){
   MSG_FOCUS_NAME = name;
@@ -818,6 +930,330 @@ function mailtoOrg(it){
   const body = `Hi ${it.contact_person || 'there'},\\n\\nI'm planning an event and would love to talk about ${ORG_CAT === 'sponsors' ? 'a possible sponsorship partnership' : ORG_CAT === 'caterers' ? 'catering options' : 'availability and pricing for ' + (it.name||'your space')}.\\n\\nQuick details about the event:\\n- ...\\n\\nHow does your team like to take inquiries?\\n\\nThanks!`;
   return `mailto:${encodeURIComponent(it.contact_email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 }
+
+// ---------- Event date (anchors Budget + Attendees headers) ----------
+let EVENT_META = {event_date:'', event_end_time:null, days_until:null, name:'', city:'', format:''};
+
+function fmtEventLine(prefix){
+  if(!EVENT_META.event_date) return prefix + ' (no date set)';
+  const d = EVENT_META.event_date;
+  const days = EVENT_META.days_until;
+  let dayPart = '';
+  if(days === 0) dayPart = ' · today';
+  else if(days === 1) dayPart = ' · tomorrow';
+  else if(typeof days === 'number' && days > 0) dayPart = ` · ${days} days away`;
+  else if(typeof days === 'number' && days < 0) dayPart = ` · ${Math.abs(days)} days ago`;
+  return `${prefix} ${d}${dayPart}`;
+}
+
+async function loadEventMeta(){
+  try{
+    const r = await fetch('/event');
+    if(!r.ok) return;
+    EVENT_META = await r.json();
+    // Reflect into the date picker without overwriting user's in-progress edit.
+    const inp = document.getElementById('ev-date');
+    if(inp && document.activeElement !== inp){
+      inp.value = (EVENT_META.event_date||'').slice(0,10);
+    }
+    refreshDateStatus();
+    refreshBudgetHeader();
+    refreshAttendeesHeader();
+  }catch(_){/* noop */}
+}
+
+function refreshDateStatus(){
+  const el = document.getElementById('ev-date-status');
+  if(!el) return;
+  if(!EVENT_META.event_date){ el.textContent = ''; return; }
+  if(EVENT_META.is_past){
+    el.textContent = '⚠ This date is in the past — is that intentional?';
+    el.style.color = '#a36c00';
+  } else {
+    const days = EVENT_META.days_until;
+    el.textContent = days === 0 ? 'Today' : days === 1 ? 'Tomorrow' : (days > 0 ? `${days} days away` : '');
+    el.style.color = '#888';
+  }
+}
+
+async function saveEventDate(){
+  const dateVal = document.getElementById('ev-date').value;
+  const startVal = document.getElementById('ev-start').value;
+  const endVal = document.getElementById('ev-end').value;
+  let event_date = dateVal || '';
+  if(event_date && startVal) event_date = event_date + 'T' + startVal;
+  let event_end_time = null;
+  if(dateVal && endVal) event_end_time = dateVal + 'T' + endVal;
+  try{
+    const r = await fetch('/event/date', {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({event_date, event_end_time})});
+    if(!r.ok) return;
+    await loadEventMeta();
+  }catch(_){/* noop */}
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  ['ev-date','ev-start','ev-end'].forEach(id => {
+    const el = document.getElementById(id);
+    if(el) el.addEventListener('change', saveEventDate);
+  });
+  loadEventMeta();
+});
+
+// ---------- Budget tab ----------
+const BUDGET_CATS = ["Venue","Food","A/V","Marketing","Other"];
+let BD_STATE = {summary:{total_budget:0,spent:0,remaining:0,sponsor_income:0}, line_items:[]};
+
+function refreshBudgetHeader(){
+  const el = document.getElementById('bd-event-line');
+  if(!el) return;
+  el.textContent = fmtEventLine('Event:');
+}
+
+async function loadBudget(){
+  // Push any shortlisted vendors over before loading; idempotent server-side.
+  await pushShortlistToBudget();
+  try{
+    const r = await fetch('/budget');
+    if(!r.ok) return;
+    BD_STATE = await r.json();
+  }catch(_){return;}
+  const totalInp = document.getElementById('bd-total');
+  if(totalInp && document.activeElement !== totalInp) totalInp.value = BD_STATE.summary.total_budget || '';
+  const sponsorInp = document.getElementById('bd-sponsor');
+  if(sponsorInp && document.activeElement !== sponsorInp) sponsorInp.value = BD_STATE.summary.sponsor_income || '';
+  renderBudgetBar();
+  renderBudgetCategories();
+}
+
+function renderBudgetBar(){
+  const s = BD_STATE.summary || {};
+  const total = +s.total_budget || 0;
+  const spent = +s.spent || 0;
+  const pct = total > 0 ? (spent / total) * 100 : 0;
+  const fill = document.getElementById('bd-bar-fill');
+  fill.style.width = Math.min(100, Math.max(0, pct)).toFixed(1) + '%';
+  fill.classList.remove('warn','over');
+  if(pct >= 100) fill.classList.add('over');
+  else if(pct >= 80) fill.classList.add('warn');
+  const text = document.getElementById('bd-bar-text');
+  text.innerHTML = `<b>$${fmtMoney(spent)}</b> of <b>$${fmtMoney(total)}</b> spent · $${fmtMoney(s.remaining||0)} left`;
+}
+
+function fmtMoney(n){
+  n = +n || 0;
+  return n.toLocaleString('en-US', {maximumFractionDigits:0});
+}
+
+function renderBudgetCategories(){
+  const root = document.getElementById('bd-categories');
+  const itemsByCat = {};
+  BUDGET_CATS.forEach(c => itemsByCat[c] = []);
+  (BD_STATE.line_items||[]).forEach(it => {
+    if(itemsByCat[it.category]) itemsByCat[it.category].push(it);
+  });
+  root.innerHTML = BUDGET_CATS.map(cat => {
+    const items = itemsByCat[cat];
+    const total = items.reduce((a,b) => a + (+b.cost||0), 0);
+    const status = items.length
+      ? `${items.length} item${items.length===1?'':'s'} · $${fmtMoney(total)}`
+      : 'no items yet';
+    const rows = items.map(it => budgetItemRow(it)).join('');
+    return `<details class="bd-cat" ${items.length ? 'open' : ''}>
+      <summary>
+        <span>${cat}</span>
+        <span class="cat-meta">${status}</span>
+      </summary>
+      <div class="cat-body">
+        ${rows || '<div style="color:#888;font-size:12px;padding:6px 0">No items.</div>'}
+        ${budgetAddForm(cat)}
+      </div>
+    </details>`;
+  }).join('');
+}
+
+function budgetItemRow(it){
+  const src = it.source === 'org_shortlist'
+    ? `<span class="src">↳ from Org shortlist${it.source_ref ? ': '+escapeHtml(it.source_ref) : ''}</span>`
+    : '';
+  const statusOpts = ['Planned','Booked','Paid'].map(s => `<option value="${s}" ${it.status===s?'selected':''}>${s}</option>`).join('');
+  return `<div class="bd-li-row">
+    <div class="bd-li-name">${escapeHtml(it.name||'')}${src}</div>
+    <div class="bd-li-cost">$<input type="number" min="0" step="50" value="${it.cost||0}" onchange="updateBudgetCost('${it.id}', this.value)"></div>
+    <div class="bd-li-status"><select onchange="updateBudgetStatus('${it.id}', this.value)">${statusOpts}</select></div>
+    <button class="bd-li-del" onclick="deleteBudgetItem('${it.id}')" title="Delete">×</button>
+  </div>`;
+}
+
+function budgetAddForm(cat){
+  return `<div class="bd-add-form">
+    <input id="bd-add-name-${cat}" placeholder="Add line item (e.g. Catering deposit)">
+    <input id="bd-add-cost-${cat}" type="number" placeholder="Cost" min="0" step="50">
+    <button onclick="addBudgetItem('${cat}')">Add</button>
+  </div>`;
+}
+
+async function saveBudgetTotal(){
+  const v = parseFloat(document.getElementById('bd-total').value || '0') || 0;
+  const status = document.getElementById('bd-total-status');
+  status.textContent = 'saving…';
+  await fetch('/budget/total', {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({total_budget: v})});
+  await loadBudget();
+  status.textContent = 'saved';
+  setTimeout(() => { if(status.textContent === 'saved') status.textContent = ''; }, 1500);
+}
+
+async function saveSponsorIncome(){
+  const v = parseFloat(document.getElementById('bd-sponsor').value || '0') || 0;
+  await fetch('/budget/sponsor_income', {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({sponsor_income: v})});
+  await loadBudget();
+}
+
+async function addBudgetItem(cat){
+  const name = (document.getElementById('bd-add-name-'+cat).value || '').trim();
+  const cost = parseFloat(document.getElementById('bd-add-cost-'+cat).value || '0') || 0;
+  if(!name){ alert('Give the line item a name first.'); return; }
+  await fetch('/budget/line_item', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({category: cat, name, cost})});
+  await loadBudget();
+}
+
+async function updateBudgetCost(id, v){
+  const cost = parseFloat(v || '0') || 0;
+  await fetch('/budget/line_item/'+encodeURIComponent(id), {method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({cost})});
+  await loadBudget();
+}
+
+async function updateBudgetStatus(id, status){
+  await fetch('/budget/line_item/'+encodeURIComponent(id), {method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({status})});
+  await loadBudget();
+}
+
+async function deleteBudgetItem(id){
+  if(!confirm('Delete this line item?')) return;
+  await fetch('/budget/line_item/'+encodeURIComponent(id), {method:'DELETE'});
+  await loadBudget();
+}
+
+// Best-effort numeric extraction from a free-form quote string ("$3,500/day", "$45-65/person").
+function parseCostText(s){
+  if(!s) return 0;
+  const m = String(s).match(/\\$?\\s*([0-9][0-9,]*)/);
+  if(!m) return 0;
+  return parseInt(m[1].replace(/,/g,''), 10) || 0;
+}
+
+async function pushShortlistToBudget(){
+  const vendors = [];
+  ['venues','caterers'].forEach(cat => {
+    const key = 'ei.org.saved.' + cat;
+    let saved = [];
+    try{ saved = JSON.parse(localStorage.getItem(key) || '[]'); }catch(_){}
+    saved.forEach(it => {
+      const targetCat = cat === 'venues' ? 'Venue' : 'Food';
+      const quote = cat === 'venues' ? (it.rental_fee||'') : (it.price_per_head||'');
+      vendors.push({
+        category: targetCat,
+        name: it.name || '(unnamed)',
+        cost: parseCostText(quote),
+        cost_text: quote,
+        source_ref: it.name || '',
+      });
+    });
+  });
+  if(!vendors.length) return;
+  try{
+    await fetch('/budget/autofill_from_shortlist', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({vendors})});
+  }catch(_){}
+}
+
+// ---------- Attendees tab ----------
+let ATT_STATE = {attendees:[], summary:{total:0,invited:0,confirmed:0,declined:0,attended:0}};
+let ATT_POLL_TIMER = null;
+
+function refreshAttendeesHeader(){
+  const el = document.getElementById('att-header');
+  if(!el) return;
+  const s = ATT_STATE.summary;
+  const date = fmtEventLine('Event:');
+  el.innerHTML = `${date} · <b>${s.total||0}</b> invited · <b style="color:#0a7d2c">${s.confirmed||0}</b> confirmed · <b style="color:#888">${s.declined||0}</b> said no`;
+}
+
+async function loadAttendees(){
+  try{
+    const r = await fetch('/attendees');
+    if(!r.ok) return;
+    ATT_STATE = await r.json();
+  }catch(_){return;}
+  refreshAttendeesHeader();
+  renderAttendees();
+}
+
+function renderAttendees(){
+  const tbody = document.getElementById('att-rows');
+  const list = ATT_STATE.attendees || [];
+  if(!list.length){
+    tbody.innerHTML = '<tr><td colspan="4" style="color:#888;padding:14px">No attendees yet — run the pipeline or add one above.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = list.map(a => {
+    const opts = ['Invited','Confirmed','Declined','Attended']
+      .map(s => `<option value="${s}" ${a.status===s?'selected':''}>${s}</option>`).join('');
+    return `<tr data-id="${escapeHtml(a.id)}">
+      <td><span class="att-dot att-dot-${escapeHtml(a.status||'Invited')}"></span><select class="att-status-${escapeHtml(a.status||'Invited')}" onchange="updateAttendeeStatus('${escapeHtml(a.id)}', this.value)">${opts}</select></td>
+      <td>${escapeHtml(a.name||'')}</td>
+      <td style="color:#666">${escapeHtml(a.company||'')}</td>
+      <td><input class="att-notes" placeholder="add note…" value="${escapeHtml(a.notes||'')}" onchange="updateAttendeeNotes('${escapeHtml(a.id)}', this.value)"></td>
+    </tr>`;
+  }).join('');
+}
+
+async function addAttendee(){
+  const name = (document.getElementById('att-name').value||'').trim();
+  if(!name){ alert('Name is required.'); return; }
+  const company = (document.getElementById('att-company').value||'').trim();
+  const email = (document.getElementById('att-email').value||'').trim();
+  const status = document.getElementById('att-add-status');
+  status.textContent = 'adding…';
+  try{
+    const r = await fetch('/attendees', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name, company, email})});
+    const data = await r.json();
+    if(!r.ok) throw new Error(data.detail || 'failed');
+    document.getElementById('att-name').value = '';
+    document.getElementById('att-company').value = '';
+    document.getElementById('att-email').value = '';
+    status.textContent = 'added';
+    await loadAttendees();
+    setTimeout(() => { if(status.textContent === 'added') status.textContent = ''; }, 1500);
+  }catch(e){
+    status.textContent = 'failed: ' + e.message;
+  }
+}
+
+async function updateAttendeeStatus(id, status){
+  await fetch('/attendees/'+encodeURIComponent(id), {method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({status})});
+  await loadAttendees();
+}
+
+async function updateAttendeeNotes(id, notes){
+  await fetch('/attendees/'+encodeURIComponent(id), {method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({notes})});
+  // Don't reload — we don't want to disrupt the typing flow. Just save.
+}
+
+function startAttendeePoll(){
+  stopAttendeePoll();
+  ATT_POLL_TIMER = setInterval(loadAttendees, 10000);
+}
+function stopAttendeePoll(){
+  if(ATT_POLL_TIMER){ clearInterval(ATT_POLL_TIMER); ATT_POLL_TIMER = null; }
+}
+
+// Hook into switchTab so Budget/Attendees data loads when their tab opens.
+const _origSwitchTab = switchTab;
+switchTab = function(name){
+  _origSwitchTab(name);
+  stopAttendeePoll();
+  if(name === 'budget') loadBudget();
+  if(name === 'attendees'){ loadAttendees(); startAttendeePoll(); }
+};
 </script>
 </body></html>"""
 
