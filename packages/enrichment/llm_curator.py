@@ -148,10 +148,17 @@ def curate(event_brief: str,
     if people:
         _cache.put("llm_curator", people, *cache_parts)
     if hasattr(response, "usage"):
+        stu = getattr(response.usage, "server_tool_use", None)
+        stu_dict = None
+        if stu is not None:
+            stu_dict = {
+                "web_search_requests": getattr(stu, "web_search_requests", 0),
+                "web_fetch_requests": getattr(stu, "web_fetch_requests", 0),
+            }
         telemetry["usage"] = {
             "input_tokens": response.usage.input_tokens,
             "output_tokens": response.usage.output_tokens,
-            "server_tool_use": getattr(response.usage, "server_tool_use", None),
+            "server_tool_use": stu_dict,
         }
 
     return people, telemetry

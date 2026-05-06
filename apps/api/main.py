@@ -33,11 +33,13 @@ from fastapi.responses import HTMLResponse, FileResponse
 
 from apps.api.routes import run as run_routes
 from apps.api.routes import messages as messages_routes
+from apps.api.routes import organization as organization_routes
 
 app = FastAPI(title="Event Intelligence API", version="0.1.0")
 
 app.include_router(run_routes.router)
 app.include_router(messages_routes.router)
+app.include_router(organization_routes.router)
 
 
 _INDEX_HTML = """<!doctype html>
@@ -85,14 +87,131 @@ th{background:#fafafa}
 .preview-row .pmsg{color:#444;margin-top:2px;white-space:pre-wrap}
 .preview-row .channel{font-size:11px;color:#888;margin-left:6px}
 .action-row{display:flex;gap:8px;align-items:center;margin-top:14px}
+/* Tabs */
+.tabs{display:flex;gap:4px;border-bottom:1px solid #ddd;margin-bottom:20px}
+.tab{padding:10px 18px;cursor:pointer;border:0;background:none;font:inherit;color:#666;border-bottom:2px solid transparent;margin-bottom:-1px}
+.tab.active{color:#111;border-bottom-color:#111;font-weight:600}
+.tab-panel{display:none}
+.tab-panel.active{display:block}
+/* Org tab */
+.org-pills{display:flex;gap:6px;margin-bottom:16px}
+.pill{padding:6px 14px;cursor:pointer;border:1px solid #ccc;background:#fff;border-radius:20px;font:inherit;font-size:13px;color:#444}
+.pill.active{background:#111;color:#fff;border-color:#111}
+.org-form{background:#fafafa;border:1px solid #eee;border-radius:8px;padding:16px;margin-bottom:16px}
+.org-form .row{display:flex;gap:12px;margin-bottom:10px;flex-wrap:wrap}
+.org-form .row > div{flex:1;min-width:180px}
+.org-form input,.org-form select{width:100%;padding:7px 9px;font:inherit;font-size:13px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box}
+.org-form label{display:block;font-size:11px;color:#666;margin-bottom:3px;text-transform:uppercase;letter-spacing:.5px}
+.org-form .actions{display:flex;justify-content:space-between;align-items:center;margin-top:6px}
+.org-cards{display:grid;grid-template-columns:1fr;gap:10px}
+.org-card{border:1px solid #e2e2e2;border-radius:8px;padding:12px 14px;background:#fff}
+.org-card .head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.org-card .name{font-weight:600;font-size:14px;color:#111}
+.org-card .meta{font-size:12px;color:#666;margin-top:2px}
+.org-card .cost{font-size:13px;color:#0a7d2c;font-weight:600}
+.org-card .rating{font-size:12px;color:#a36c00}
+.org-card .actions{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
+.org-card .actions .btn-msg,.org-card .actions a.btn-msg{text-decoration:none}
+.org-card .desc{font-size:12.5px;color:#444;margin-top:6px;line-height:1.4}
+.org-card details{margin-top:8px;font-size:12px;color:#444}
+.org-card details summary{cursor:pointer;color:#666;font-size:12px}
+.org-card details ul{margin:6px 0 0 18px;padding:0}
+.amenity{display:inline-block;font-size:11px;background:#f0f0f0;padding:2px 7px;border-radius:10px;margin:2px 3px 0 0}
+.org-tabbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:13px;color:#666}
+.saved-pill{font-size:11px;background:#fef7d8;padding:2px 8px;border-radius:10px;color:#a36c00}
+.btn-star{background:none;border:0;cursor:pointer;font-size:16px;padding:0 4px;color:#bbb}
+.btn-star.saved{color:#f5a623}
 </style></head>
 <body>
-<h1>Event Intelligence</h1>
-<div class="sub">Paste an event proposal. Get a curated, ranked list.</div>
+<h1>OneLoop</h1>
+<div class="sub">Plan a curated event end-to-end — find the right people, then organize the logistics.</div>
+
+<div class="tabs">
+  <button class="tab active" data-tab="ei" onclick="switchTab('ei')">Event Intelligence</button>
+  <button class="tab" data-tab="org" onclick="switchTab('org')">Organization</button>
+</div>
+
+<!-- TAB: Event Intelligence -->
+<div class="tab-panel active" id="panel-ei">
 <div id="warn"></div>
 <textarea id="brief" placeholder="e.g. 100-person crypto hackathon for builders, founders, ZK researchers in SF..."></textarea>
 <div><button id="go">Run pipeline</button> <span id="status" style="margin-left:12px;color:#888"></span></div>
 <div class="result" id="result"></div>
+</div>
+
+<!-- TAB: Organization -->
+<div class="tab-panel" id="panel-org">
+  <div class="org-pills">
+    <button class="pill active" data-cat="venues" onclick="switchCat('venues')">🏛 Venues</button>
+    <button class="pill" data-cat="caterers" onclick="switchCat('caterers')">🍽 Caterers</button>
+    <button class="pill" data-cat="sponsors" onclick="switchCat('sponsors')">🤝 Sponsors</button>
+  </div>
+
+  <!-- Search forms -->
+  <div class="org-form" id="form-venues">
+    <div class="row">
+      <div><label>Location</label><input id="v-location" placeholder="San Francisco, SoMa"></div>
+      <div><label>Capacity</label><input id="v-capacity" type="number" placeholder="100" min="1"></div>
+      <div><label>Date / availability</label><input id="v-availability" placeholder="Sat May 17, evening"></div>
+    </div>
+    <div class="row">
+      <div><label>Amenities</label><input id="v-amenities" placeholder="AV, wifi, kitchen"></div>
+      <div><label>Budget</label><input id="v-budget" placeholder="up to $5k"></div>
+      <div><label>Sort by</label>
+        <select id="v-sort"><option value="relevance">relevance</option><option value="cost">cost (low → high)</option><option value="rating">rating</option></select>
+      </div>
+    </div>
+    <div class="actions">
+      <span style="font-size:12px;color:#888">~30s · ~$0.30 first time, free if cached</span>
+      <button onclick="orgSearch('venues')">Search venues</button>
+    </div>
+  </div>
+
+  <div class="org-form" id="form-caterers" style="display:none">
+    <div class="row">
+      <div><label>Location</label><input id="c-location" placeholder="San Francisco"></div>
+      <div><label>Cuisine</label><input id="c-cuisine" placeholder="Mediterranean / Pan-Asian"></div>
+      <div><label>Headcount</label><input id="c-headcount" type="number" placeholder="100"></div>
+    </div>
+    <div class="row">
+      <div><label>Dietary needs</label><input id="c-dietary" placeholder="vegan, gluten-free"></div>
+      <div><label>Budget per head</label><input id="c-budget" placeholder="$30-50pp"></div>
+      <div><label>Sort by</label>
+        <select id="c-sort"><option value="relevance">relevance</option><option value="cost">cost (low → high)</option><option value="rating">rating</option></select>
+      </div>
+    </div>
+    <div class="actions">
+      <span style="font-size:12px;color:#888">~30s · ~$0.30 first time, free if cached</span>
+      <button onclick="orgSearch('caterers')">Search caterers</button>
+    </div>
+  </div>
+
+  <div class="org-form" id="form-sponsors" style="display:none">
+    <div class="row">
+      <div><label>Industry / theme</label><input id="s-industry" placeholder="crypto / dev tools / AI infra"></div>
+      <div><label>Company size</label><input id="s-size" placeholder="Series B+, 200+ emp"></div>
+      <div><label>Sponsorship budget</label><input id="s-budget" placeholder="$10-50k tier"></div>
+    </div>
+    <div class="row">
+      <div><label>Notes</label><input id="s-notes" placeholder="hackathons, demo nights"></div>
+      <div></div>
+      <div><label>Sort by</label>
+        <select id="s-sort"><option value="relevance">relevance</option><option value="cost">budget (low → high)</option><option value="rating">rating</option></select>
+      </div>
+    </div>
+    <div class="actions">
+      <span style="font-size:12px;color:#888">~30s · ~$0.30 first time, free if cached</span>
+      <button onclick="orgSearch('sponsors')">Search sponsors</button>
+    </div>
+  </div>
+
+  <div class="org-tabbar">
+    <span id="org-status" style="color:#888"></span>
+    <span><button class="btn-secondary" onclick="toggleSaved()" id="btn-show-saved">★ Show saved</button></span>
+  </div>
+
+  <div class="org-cards" id="org-results"></div>
+</div>
 
 <!-- Outreach modal -->
 <div class="modal-bg" id="msg-modal" onclick="if(event.target===this)closeMsg()">
@@ -306,6 +425,212 @@ async function openAllMail(){
   if(!withEmail.length){ alert('No emails available — discover contacts first or skip recipients without email.'); return; }
   if(!confirm(`This will open ${withEmail.length} draft email(s) in your mail client. Each draft is pre-filled but NOT sent — you'll click Send yourself in each one. Continue?`)) return;
   withEmail.forEach((m, i) => setTimeout(() => { window.location.href = mailtoFor(m); }, i * 250));
+}
+
+// ---------- Tabs ----------
+function switchTab(name){
+  document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + name));
+}
+
+// ---------- Organization tab ----------
+let ORG_CAT = 'venues';
+let ORG_RESULTS = [];      // current category's results
+let SHOWING_SAVED = false;
+
+function switchCat(cat){
+  ORG_CAT = cat;
+  document.querySelectorAll('.pill').forEach(p => p.classList.toggle('active', p.dataset.cat === cat));
+  ['venues','caterers','sponsors'].forEach(c => {
+    const f = document.getElementById('form-' + c);
+    if(f) f.style.display = (c === cat) ? '' : 'none';
+  });
+  ORG_RESULTS = [];
+  SHOWING_SAVED = false;
+  document.getElementById('btn-show-saved').textContent = '★ Show saved';
+  renderOrgCards();
+  document.getElementById('org-status').textContent = '';
+}
+
+function readQuery(cat){
+  if(cat === 'venues'){
+    return {
+      location: v('v-location'),
+      capacity: v('v-capacity'),
+      availability: v('v-availability'),
+      amenities: v('v-amenities'),
+      budget: v('v-budget'),
+      limit: 12,
+    };
+  }
+  if(cat === 'caterers'){
+    return {
+      location: v('c-location'),
+      cuisine: v('c-cuisine'),
+      headcount: v('c-headcount'),
+      dietary: v('c-dietary'),
+      budget_per_head: v('c-budget'),
+      limit: 12,
+    };
+  }
+  if(cat === 'sponsors'){
+    return {
+      industry: v('s-industry'),
+      size: v('s-size'),
+      budget: v('s-budget'),
+      notes: v('s-notes'),
+      limit: 12,
+    };
+  }
+  return {};
+}
+function v(id){ return (document.getElementById(id)?.value || '').trim(); }
+
+async function orgSearch(cat){
+  ORG_CAT = cat;
+  SHOWING_SAVED = false;
+  document.getElementById('btn-show-saved').textContent = '★ Show saved';
+  const sortEl = document.getElementById({venues:'v-sort',caterers:'c-sort',sponsors:'s-sort'}[cat]);
+  const sort = sortEl ? sortEl.value : 'relevance';
+  const status = document.getElementById('org-status');
+  const t0 = Date.now();
+  const tick = setInterval(()=>{
+    const s = Math.floor((Date.now()-t0)/1000);
+    status.textContent = `searching ${cat}… ${s}s elapsed`;
+  }, 250);
+  document.getElementById('org-results').innerHTML = '';
+  try{
+    const r = await fetch('/org/search', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({category: cat, query: readQuery(cat), sort})});
+    const data = await r.json();
+    clearInterval(tick);
+    if(!r.ok) throw new Error(data.detail || 'search failed');
+    ORG_RESULTS = data.results || [];
+    const cached = data.telemetry && data.telemetry.status === 'cached';
+    status.textContent = `${data.count} result(s) · sort: ${data.sort}${cached ? ' · cached (free)' : ''} · ${((Date.now()-t0)/1000).toFixed(1)}s`;
+    renderOrgCards();
+  } catch(e){
+    clearInterval(tick);
+    status.textContent = 'failed: ' + e.message;
+    document.getElementById('org-results').innerHTML = `<div class="warn err">${e.message}</div>`;
+  }
+}
+
+function savedKey(){ return 'ei.org.saved.' + ORG_CAT; }
+function getSaved(){ try{ return JSON.parse(localStorage.getItem(savedKey())||'[]'); }catch(_){ return []; } }
+function setSaved(arr){ localStorage.setItem(savedKey(), JSON.stringify(arr)); }
+function isSaved(item){ return getSaved().some(s => s.name === item.name); }
+function toggleSave(idx){
+  const item = (SHOWING_SAVED ? getSaved() : ORG_RESULTS)[idx];
+  if(!item) return;
+  let saved = getSaved();
+  if(saved.some(s => s.name === item.name)){
+    saved = saved.filter(s => s.name !== item.name);
+  } else {
+    saved.push(item);
+  }
+  setSaved(saved);
+  renderOrgCards();
+}
+function toggleSaved(){
+  SHOWING_SAVED = !SHOWING_SAVED;
+  document.getElementById('btn-show-saved').textContent = SHOWING_SAVED ? '⊕ Show search results' : '★ Show saved';
+  renderOrgCards();
+}
+
+function renderOrgCards(){
+  const list = SHOWING_SAVED ? getSaved() : ORG_RESULTS;
+  const root = document.getElementById('org-results');
+  if(!list.length){
+    root.innerHTML = SHOWING_SAVED
+      ? '<div style="color:#888;padding:12px">No saved items in this category yet. Run a search and click ★ on results to shortlist.</div>'
+      : '';
+    return;
+  }
+  root.innerHTML = list.map((it, i) => orgCardHtml(it, i)).join('');
+}
+
+function orgCardHtml(it, i){
+  const cost = costLine(it);
+  const rating = it.rating ? `<span class="rating">★ ${(+it.rating).toFixed(1)}</span>` : '';
+  const saved = isSaved(it);
+  const meta = metaLine(it);
+  const desc = it.description ? `<div class="desc">${escapeHtml(it.description)}</div>` : '';
+  const details = detailsHtml(it);
+  const contactBtn = (it.contact_email || it.website)
+    ? (it.contact_email
+        ? `<a class="btn-msg" href="${mailtoOrg(it)}">✉ Contact</a>`
+        : `<a class="btn-msg" href="${escapeHtml(it.website)}" target="_blank">↗ Open site</a>`)
+    : '<span style="font-size:11px;color:#a36c00">no contact found</span>';
+  return `
+    <div class="org-card">
+      <div class="head">
+        <div>
+          <div class="name">${escapeHtml(it.name||'(no name)')} ${saved ? '<span class="saved-pill">saved</span>':''}</div>
+          <div class="meta">${meta}</div>
+        </div>
+        <div style="text-align:right">
+          <div class="cost">${escapeHtml(cost)}</div>
+          ${rating}
+          <div><button class="btn-star ${saved?'saved':''}" onclick="toggleSave(${i})" title="${saved?'Unshortlist':'Shortlist'}">★</button></div>
+        </div>
+      </div>
+      ${desc}
+      ${details}
+      <div class="actions">
+        ${contactBtn}
+        ${it.website ? `<a class="btn-msg" href="${escapeHtml(it.website)}" target="_blank">↗ Website</a>` : ''}
+        ${it.source_url ? `<a class="btn-msg" href="${escapeHtml(it.source_url)}" target="_blank">↗ Source</a>` : ''}
+      </div>
+    </div>`;
+}
+
+function metaLine(it){
+  if(ORG_CAT === 'venues'){
+    return [it.address, it.city && it.address?.includes(it.city) ? '' : it.city, it.capacity ? `cap ${it.capacity}` : ''].filter(Boolean).map(escapeHtml).join(' · ');
+  }
+  if(ORG_CAT === 'caterers'){
+    return [it.cuisine_type, it.location, it.minimum_order ? `min ${it.minimum_order}` : ''].filter(Boolean).map(escapeHtml).join(' · ');
+  }
+  if(ORG_CAT === 'sponsors'){
+    return [it.industry, it.company_size, it.budget_range].filter(Boolean).map(escapeHtml).join(' · ');
+  }
+  return '';
+}
+function costLine(it){
+  if(ORG_CAT === 'venues') return it.rental_fee || '';
+  if(ORG_CAT === 'caterers') return it.price_per_head || '';
+  if(ORG_CAT === 'sponsors') return it.typical_sponsorship_amount || '';
+  return '';
+}
+function detailsHtml(it){
+  const parts = [];
+  if(ORG_CAT === 'venues'){
+    if(Array.isArray(it.amenities) && it.amenities.length){
+      parts.push(it.amenities.map(a => `<span class="amenity">${escapeHtml(a)}</span>`).join(''));
+    }
+    if(it.minimum_spend) parts.push(`<div>Minimum spend: ${escapeHtml(it.minimum_spend)}</div>`);
+  }
+  if(ORG_CAT === 'caterers'){
+    if(Array.isArray(it.dietary_accommodations) && it.dietary_accommodations.length){
+      parts.push(it.dietary_accommodations.map(d => `<span class="amenity">${escapeHtml(d)}</span>`).join(''));
+    }
+    if(Array.isArray(it.pricing_tiers) && it.pricing_tiers.length){
+      parts.push('<ul>' + it.pricing_tiers.map(t => `<li>${escapeHtml(t.name||'')}: ${escapeHtml(t.price||'')}</li>`).join('') + '</ul>');
+    }
+  }
+  if(ORG_CAT === 'sponsors'){
+    if(Array.isArray(it.past_events_sponsored) && it.past_events_sponsored.length){
+      parts.push('<div><b>Past events:</b> ' + it.past_events_sponsored.slice(0,5).map(escapeHtml).join(', ') + '</div>');
+    }
+    if(it.contact_person) parts.push(`<div><b>Likely contact:</b> ${escapeHtml(it.contact_person)}</div>`);
+  }
+  if(!parts.length) return '';
+  return `<details><summary>more details</summary><div style="margin-top:6px">${parts.join('')}</div></details>`;
+}
+function mailtoOrg(it){
+  const subject = `Inquiry — event ${ORG_CAT === 'venues' ? 'venue' : ORG_CAT === 'caterers' ? 'catering' : 'sponsorship'}`;
+  const body = `Hi ${it.contact_person || 'there'},\\n\\nI'm planning an event and would love to talk about ${ORG_CAT === 'sponsors' ? 'a possible sponsorship partnership' : ORG_CAT === 'caterers' ? 'catering options' : 'availability and pricing for ' + (it.name||'your space')}.\\n\\nQuick details about the event:\\n- ...\\n\\nHow does your team like to take inquiries?\\n\\nThanks!`;
+  return `mailto:${encodeURIComponent(it.contact_email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 }
 </script>
 </body></html>"""
