@@ -133,6 +133,20 @@ class Visibility:
     latest_activity_log: str = "docs/agent_activity_log.md"
 
 
+# Pre-populated category names for the Budget tab. Five fixed categories per spec.
+BUDGET_CATEGORIES: list[str] = ["Venue", "Food", "A/V", "Marketing", "Other"]
+
+
+@dataclass
+class Budget:
+    total_budget: float = 0.0
+    sponsor_income: float = 0.0
+    # Flat list keyed by id; each item has category, name, cost (number), cost_text
+    # (raw quote string when sourced from Org), status, source ("manual"|"org_shortlist"),
+    # source_ref (vendor name when auto-filled).
+    line_items: list[dict] = field(default_factory=list)
+
+
 @dataclass
 class EventState:
     event: EventInfo = field(default_factory=EventInfo)
@@ -143,6 +157,12 @@ class EventState:
     sponsors: Sponsors = field(default_factory=Sponsors)
     state: StateMeta = field(default_factory=StateMeta)
     visibility: Visibility = field(default_factory=Visibility)
+    # Eventful platform extensions (date anchor, budget tab, attendees tab).
+    # New top-level keys per spec — existing keys above are untouched.
+    event_date: str = ""              # ISO 8601 date or datetime
+    event_end_time: Optional[str] = None  # ISO 8601 datetime, nullable
+    budget: Budget = field(default_factory=Budget)
+    attendees: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

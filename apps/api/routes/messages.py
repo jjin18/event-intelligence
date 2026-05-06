@@ -15,9 +15,11 @@ import json
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
+
+from packages.shared import tokens as token_mod
 
 
 router = APIRouter(tags=["outreach"])
@@ -35,14 +37,27 @@ def _load_people() -> list[dict]:
         return list(csv.DictReader(f))
 
 
-def _load_event() -> dict:
+def _load_full_state() -> dict:
     if not _EVENT_STATE.exists():
         return {}
     try:
-        s = json.loads(_EVENT_STATE.read_text())
+        return json.loads(_EVENT_STATE.read_text())
     except json.JSONDecodeError:
         return {}
-    return s.get("event", {}) or {}
+
+
+def _load_event() -> dict:
+    """Backwards-compat wrapper: returns the legacy event sub-dict.
+
+    Augments it with the new top-level ``event_date`` (passed via the
+    ``_event_date`` key the templating module looks at first) so callers that
+    still take the old shape get the new placeholder data without code change.
+    """
+    state = _load_full_state()
+    event = dict(state.get("event") or {})
+    if state.get("event_date"):
+        event["_event_date"] = state["event_date"]
+    return event
 
 
 def _save_people(people: list[dict]) -> None:
@@ -110,8 +125,21 @@ class RenderRequest(BaseModel):
     top_n: Optional[int] = Field(None, description="Render for the first N rows of ranked CSV.")
 
 
+def _confirm_link_base(request: Request) -> str:
+    """Build the absolute URL prefix for /confirm/{token}.
+
+    Honors X-Forwarded-Proto/Host so the link works behind proxies/Railway,
+    falling back to the request's scheme + host.
+    """
+    fwd_proto = request.headers.get("x-forwarded-proto")
+    fwd_host = request.headers.get("x-forwarded-host") or request.headers.get("host")
+    if fwd_proto and fwd_host:
+        return f"{fwd_proto}://{fwd_host}/confirm/"
+    return f"{request.url.scheme}://{request.url.netloc}/confirm/"
+
+
 @router.post("/messages/render")
-async def render_messages(body: RenderRequest) -> dict:
+async def render_messages(body: RenderRequest, request: Request) -> dict:
     people = _load_people()
     if not people:
         raise HTTPException(404, "No ranked people yet — run the pipeline first.")
@@ -125,6 +153,25 @@ async def render_messages(body: RenderRequest) -> dict:
         selected = people[:1]  # default: just the first person
 
     from packages.shared.templating import render_batch
-    event = _load_event()
-    rendered = render_batch(body.template, selected, event)
+
+    state = _load_full_state()
+    event = dict(state.get("event") or {})
+    event_date = state.get("event_date") or ""
+    if event_date:
+        event["_event_date"] = event_date
+
+    # Per-recipient confirm link via signed token. Each token is unique to
+    # (attendee_id, event identity) so clicking one person's link only ever
+    # confirms that person.
+    base = _confirm_link_base(request)
+    extras: dict[str, dict[str, str]] = {}
+    for p in selected:
+        name = (p.get("name") or "").strip()
+        if not name:
+            continue
+        aid = token_mod.attendee_id_for(name, p.get("email") or "")
+        token = token_mod.issue(aid, event, event_date_iso=event_date)
+        extras[name] = {"confirm_link": base + token}
+
+    rendered = render_batch(body.template, selected, event, per_person_extras=extras)
     return {"ok": True, "count": len(rendered), "messages": rendered}
