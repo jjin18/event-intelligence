@@ -205,6 +205,11 @@ th{background:#fafafa}
     </div>
   </div>
 
+  <div id="org-banner" style="display:none;background:#eef7f0;border:1px solid #c5e3cd;color:#0a5d28;padding:8px 12px;border-radius:6px;margin-bottom:12px;font-size:13px;display:flex;justify-content:space-between;align-items:center;gap:8px">
+    <span><b>Auto-sourced from your Event Intelligence prompt.</b> <span id="org-banner-meta" style="color:#3d6f4d"></span></span>
+    <button class="btn-secondary" onclick="retryCategory(ORG_CAT)" title="Re-run search for the current category" style="padding:4px 10px;font-size:12px">🔄 Re-run this category</button>
+  </div>
+
   <div class="org-tabbar">
     <span id="org-status" style="color:#888"></span>
     <span><button class="btn-secondary" onclick="toggleSaved()" id="btn-show-saved">★ Show saved</button></span>
@@ -284,6 +289,10 @@ btn.onclick = async () => {
     const peopleResp = await fetch('/people');
     const people = (await peopleResp.json()).people || [];
     renderResult(data, people);
+    // Auto-fire org searches in parallel — don't await; people table is
+    // already on screen and org cards stream in to their pills as each
+    // /org/search promise resolves.
+    autoFireOrgSearches();
   } catch(e) {
     clearInterval(tick);
     status.textContent = '';
@@ -435,8 +444,15 @@ function switchTab(name){
 
 // ---------- Organization tab ----------
 let ORG_CAT = 'venues';
-let ORG_RESULTS = [];      // current category's results
 let SHOWING_SAVED = false;
+// Per-category in-memory store. Persists for the page session so flipping
+// pills doesn't refetch. Auto-fired results land here as each promise resolves.
+const ORG_STATE = {
+  venues:   { status: 'idle', results: [], error: '', sort: 'relevance', autoSourced: false, lastQuery: null, autoBatchId: 0 },
+  caterers: { status: 'idle', results: [], error: '', sort: 'relevance', autoSourced: false, lastQuery: null, autoBatchId: 0 },
+  sponsors: { status: 'idle', results: [], error: '', sort: 'relevance', autoSourced: false, lastQuery: null, autoBatchId: 0 },
+};
+let AUTO_BATCH_ID = 0;  // bump when a new EI run kicks off auto-search
 
 function switchCat(cat){
   ORG_CAT = cat;
@@ -445,11 +461,10 @@ function switchCat(cat){
     const f = document.getElementById('form-' + c);
     if(f) f.style.display = (c === cat) ? '' : 'none';
   });
-  ORG_RESULTS = [];
   SHOWING_SAVED = false;
   document.getElementById('btn-show-saved').textContent = '★ Show saved';
   renderOrgCards();
-  document.getElementById('org-status').textContent = '';
+  refreshOrgStatus();
 }
 
 function readQuery(cat){
@@ -486,33 +501,182 @@ function readQuery(cat){
 }
 function v(id){ return (document.getElementById(id)?.value || '').trim(); }
 
-async function orgSearch(cat){
-  ORG_CAT = cat;
-  SHOWING_SAVED = false;
-  document.getElementById('btn-show-saved').textContent = '★ Show saved';
+async function orgSearch(cat, opts){
+  // opts: { query?, sort?, autoSourced?, suppressActiveSwitch? }
+  opts = opts || {};
   const sortEl = document.getElementById({venues:'v-sort',caterers:'c-sort',sponsors:'s-sort'}[cat]);
-  const sort = sortEl ? sortEl.value : 'relevance';
-  const status = document.getElementById('org-status');
-  const t0 = Date.now();
-  const tick = setInterval(()=>{
-    const s = Math.floor((Date.now()-t0)/1000);
-    status.textContent = `searching ${cat}… ${s}s elapsed`;
-  }, 250);
-  document.getElementById('org-results').innerHTML = '';
-  try{
-    const r = await fetch('/org/search', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({category: cat, query: readQuery(cat), sort})});
-    const data = await r.json();
-    clearInterval(tick);
-    if(!r.ok) throw new Error(data.detail || 'search failed');
-    ORG_RESULTS = data.results || [];
-    const cached = data.telemetry && data.telemetry.status === 'cached';
-    status.textContent = `${data.count} result(s) · sort: ${data.sort}${cached ? ' · cached (free)' : ''} · ${((Date.now()-t0)/1000).toFixed(1)}s`;
-    renderOrgCards();
-  } catch(e){
-    clearInterval(tick);
-    status.textContent = 'failed: ' + e.message;
-    document.getElementById('org-results').innerHTML = `<div class="warn err">${e.message}</div>`;
+  const sort = opts.sort || (sortEl ? sortEl.value : 'relevance');
+  const query = opts.query || readQuery(cat);
+  const autoSourced = !!opts.autoSourced;
+
+  // Manual search overrides any prior auto-fire result for this category.
+  const st = ORG_STATE[cat];
+  st.status = 'loading';
+  st.error = '';
+  st.results = [];
+  st.sort = sort;
+  st.lastQuery = query;
+  st.autoSourced = autoSourced;
+
+  if(!opts.suppressActiveSwitch){
+    SHOWING_SAVED = false;
+    document.getElementById('btn-show-saved').textContent = '★ Show saved';
   }
+
+  // Render the loading state if user is currently looking at this pill.
+  if(ORG_CAT === cat) renderOrgCards();
+  refreshOrgStatus();
+  updatePillBadges();
+
+  const t0 = Date.now();
+  try {
+    const r = await fetch('/org/search', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({category: cat, query, sort})});
+    const data = await r.json();
+    if(!r.ok) throw new Error(data.detail || 'search failed');
+    st.status = 'ok';
+    st.results = data.results || [];
+    st.elapsed = ((Date.now()-t0)/1000).toFixed(1);
+    st.cached = !!(data.telemetry && data.telemetry.status === 'cached');
+  } catch(e) {
+    st.status = 'error';
+    st.error = e.message || String(e);
+  }
+  if(ORG_CAT === cat) renderOrgCards();
+  refreshOrgStatus();
+  updatePillBadges();
+}
+
+function retryCategory(cat){
+  const st = ORG_STATE[cat];
+  // Use the saved last query (auto-fire or manual). If none, fall back to
+  // reading the form.
+  const q = st.lastQuery || readQuery(cat);
+  orgSearch(cat, {query: q, sort: st.sort, autoSourced: st.autoSourced});
+}
+
+function refreshOrgStatus(){
+  const st = ORG_STATE[ORG_CAT];
+  const s = document.getElementById('org-status');
+  if(!s) return;
+  if(SHOWING_SAVED){ s.textContent = `${getSaved().length} saved in ${ORG_CAT}`; return; }
+  if(st.status === 'idle'){ s.textContent = ''; return; }
+  if(st.status === 'loading'){ s.textContent = `searching ${ORG_CAT}…`; return; }
+  if(st.status === 'error'){ s.textContent = `failed: ${st.error}`; return; }
+  if(st.status === 'ok'){
+    s.textContent = `${st.results.length} result(s) · sort: ${st.sort}${st.cached ? ' · cached (free)' : ''}${st.elapsed ? ' · '+st.elapsed+'s' : ''}${st.autoSourced ? ' · auto-sourced' : ''}`;
+  }
+}
+
+function updatePillBadges(){
+  // Show a tiny status dot on each pill so user can see all three categories'
+  // progress at a glance even while looking at one of them.
+  ['venues','caterers','sponsors'].forEach(c => {
+    const pill = document.querySelector(`.pill[data-cat="${c}"]`);
+    if(!pill) return;
+    const st = ORG_STATE[c];
+    // strip any existing dot
+    pill.querySelectorAll('.pill-dot').forEach(n => n.remove());
+    const dot = document.createElement('span');
+    dot.className = 'pill-dot';
+    dot.style.cssText = 'display:inline-block;width:7px;height:7px;border-radius:50%;margin-left:6px;vertical-align:middle';
+    if(st.status === 'loading'){ dot.style.background = '#a36c00'; dot.title = 'loading'; }
+    else if(st.status === 'ok'){ dot.style.background = '#0a7d2c'; dot.title = `${st.results.length} results`; }
+    else if(st.status === 'error'){ dot.style.background = '#c33'; dot.title = 'error: ' + st.error; }
+    else { return; /* idle: no dot */ }
+    pill.appendChild(dot);
+  });
+}
+
+// Pre-populate forms from event summary so user can see/edit what was searched.
+function fillVenueForm(q){
+  document.getElementById('v-location').value = q.location || '';
+  document.getElementById('v-capacity').value = q.capacity || '';
+  document.getElementById('v-availability').value = q.availability || '';
+  document.getElementById('v-amenities').value = q.amenities || '';
+  document.getElementById('v-budget').value = q.budget || '';
+}
+function fillCatererForm(q){
+  document.getElementById('c-location').value = q.location || '';
+  document.getElementById('c-cuisine').value = q.cuisine || '';
+  document.getElementById('c-headcount').value = q.headcount || '';
+  document.getElementById('c-dietary').value = q.dietary || '';
+  document.getElementById('c-budget').value = q.budget_per_head || '';
+}
+function fillSponsorForm(q){
+  document.getElementById('s-industry').value = q.industry || '';
+  document.getElementById('s-size').value = q.size || '';
+  document.getElementById('s-budget').value = q.budget || '';
+  document.getElementById('s-notes').value = q.notes || '';
+}
+
+// Build category-specific queries from event summary. Locked-in scope:
+//   Venues   = location + capacity + format hint
+//   Caterers = location + headcount
+//   Sponsors = industry/theme (from format+goal) + notes (goal)
+function deriveOrgQueries(summary){
+  const fmt = (summary.format || '').trim();
+  const city = (summary.city || '').trim();
+  const size = summary.target_size || '';
+  const goal = (summary.goal || '').trim();
+  const themeHint = [fmt, goal].filter(Boolean).join(' — ');
+  return {
+    venues: {
+      location: city + (fmt ? ` (suitable for a ${fmt})` : ''),
+      capacity: size,
+      availability: '',
+      amenities: '',
+      budget: '',
+      limit: 12,
+    },
+    caterers: {
+      location: city,
+      cuisine: '',
+      headcount: size,
+      dietary: '',
+      budget_per_head: '',
+      limit: 12,
+    },
+    sponsors: {
+      industry: themeHint,
+      size: '',
+      budget: '',
+      notes: goal,
+      limit: 12,
+    },
+  };
+}
+
+async function autoFireOrgSearches(){
+  // Pull the latest event summary, derive per-category queries, fan out
+  // three parallel searches. Doesn't block — caller already returned.
+  let summary;
+  try {
+    const r = await fetch('/event/summary');
+    summary = await r.json();
+    if(!summary || !summary.ok) return;  // no event_state → nothing to auto-source
+  } catch(_){ return; }
+
+  const queries = deriveOrgQueries(summary);
+  AUTO_BATCH_ID++;
+
+  // Show banner on Org tab.
+  const banner = document.getElementById('org-banner');
+  const meta = document.getElementById('org-banner-meta');
+  if(banner) banner.style.display = 'flex';
+  if(meta) meta.textContent = [summary.format, summary.city, summary.target_size ? summary.target_size + ' people' : ''].filter(Boolean).join(' · ');
+
+  // Pre-fill forms (user can still edit).
+  fillVenueForm(queries.venues);
+  fillCatererForm(queries.caterers);
+  fillSponsorForm(queries.sponsors);
+
+  // Fan out — each call mutates ORG_STATE[cat] independently.
+  // We don't await so failures in one don't delay the others (orgSearch
+  // already isolates errors per-category).
+  ['venues','caterers','sponsors'].forEach(cat => {
+    ORG_STATE[cat].autoBatchId = AUTO_BATCH_ID;
+    orgSearch(cat, {query: queries[cat], sort: 'relevance', autoSourced: true, suppressActiveSwitch: true});
+  });
 }
 
 function savedKey(){ return 'ei.org.saved.' + ORG_CAT; }
@@ -520,7 +684,7 @@ function getSaved(){ try{ return JSON.parse(localStorage.getItem(savedKey())||'[
 function setSaved(arr){ localStorage.setItem(savedKey(), JSON.stringify(arr)); }
 function isSaved(item){ return getSaved().some(s => s.name === item.name); }
 function toggleSave(idx){
-  const item = (SHOWING_SAVED ? getSaved() : ORG_RESULTS)[idx];
+  const item = (SHOWING_SAVED ? getSaved() : ORG_STATE[ORG_CAT].results)[idx];
   if(!item) return;
   let saved = getSaved();
   if(saved.some(s => s.name === item.name)){
@@ -535,18 +699,37 @@ function toggleSaved(){
   SHOWING_SAVED = !SHOWING_SAVED;
   document.getElementById('btn-show-saved').textContent = SHOWING_SAVED ? '⊕ Show search results' : '★ Show saved';
   renderOrgCards();
+  refreshOrgStatus();
 }
 
 function renderOrgCards(){
-  const list = SHOWING_SAVED ? getSaved() : ORG_RESULTS;
   const root = document.getElementById('org-results');
-  if(!list.length){
-    root.innerHTML = SHOWING_SAVED
-      ? '<div style="color:#888;padding:12px">No saved items in this category yet. Run a search and click ★ on results to shortlist.</div>'
-      : '';
+  const st = ORG_STATE[ORG_CAT];
+
+  if(SHOWING_SAVED){
+    const list = getSaved();
+    root.innerHTML = list.length
+      ? list.map((it, i) => orgCardHtml(it, i)).join('')
+      : '<div style="color:#888;padding:12px">No saved items in this category yet. Run a search and click ★ on results to shortlist.</div>';
     return;
   }
-  root.innerHTML = list.map((it, i) => orgCardHtml(it, i)).join('');
+
+  if(st.status === 'loading'){
+    root.innerHTML = `<div style="padding:14px;color:#888">⏳ searching ${ORG_CAT}… (typical 20–40s, free if cached)</div>`;
+    return;
+  }
+  if(st.status === 'error'){
+    root.innerHTML = `<div class="warn err" style="display:flex;justify-content:space-between;align-items:center"><span>${escapeHtml(st.error||'search failed')}</span><button class="btn-secondary" onclick="retryCategory('${ORG_CAT}')" style="padding:4px 10px;font-size:12px">Retry</button></div>`;
+    return;
+  }
+  if(st.status === 'ok'){
+    root.innerHTML = st.results.length
+      ? st.results.map((it, i) => orgCardHtml(it, i)).join('')
+      : '<div style="color:#888;padding:12px">No results — try broadening the query or removing filters.</div>';
+    return;
+  }
+  // idle
+  root.innerHTML = '';
 }
 
 function orgCardHtml(it, i){
@@ -651,6 +834,33 @@ async def people():
     with csv_path.open() as f:
         rows = list(_csv.DictReader(f))
     return {"people": rows}
+
+
+@app.get("/event/summary")
+async def event_summary():
+    """Return the latest extracted event metadata.
+
+    Used by the Organization tab to auto-fire venues/caterers/sponsors searches
+    after an Event Intelligence run completes. Returns only the fields needed
+    for org search query construction.
+    """
+    import json as _json
+    p = _REPO_ROOT / "data" / "event_state.json"
+    if not p.exists():
+        return {"ok": False, "reason": "no_event_state"}
+    try:
+        state = _json.loads(p.read_text())
+    except _json.JSONDecodeError:
+        return {"ok": False, "reason": "invalid_event_state"}
+    ev = (state.get("event") or {})
+    return {
+        "ok": True,
+        "name": ev.get("name") or "",
+        "city": ev.get("city") or "",
+        "target_size": ev.get("target_size") or 0,
+        "format": ev.get("format") or "",
+        "goal": ev.get("goal") or "",
+    }
 
 
 @app.get("/download/ranked_people.csv")
