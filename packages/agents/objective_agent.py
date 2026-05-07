@@ -231,18 +231,36 @@ def run(brief: str, constraints: Optional[dict[str, Any]] = None,
 
     if event_state is not None:
         ev = event_state.setdefault("event", {})
-        if event_name:
-            ev["name"] = event_name
+        # Sticky-manual edits: skip overwriting any field the user has
+        # explicitly set. Stamp source="extracted" on the rest so the UI can
+        # tell which fields came from the prompt vs. the user.
+        sources = event_state.setdefault("event_field_sources", {})
+
+        def _set_extracted(field_path: str, container: dict, key: str, value: Any) -> None:
+            """Write value into container[key] unless source[field_path] == 'manual'.
+            On write, stamp source[field_path] = 'extracted'. Empty extractions
+            leave existing data untouched (don't blank out)."""
+            if sources.get(field_path) == "manual":
+                return
+            # Treat empty string / None as "the agent didn't extract anything."
+            # Preserve whatever's there rather than wiping it.
+            if value in (None, ""):
+                return
+            container[key] = value
+            sources[field_path] = "extracted"
+
+        _set_extracted("name", ev, "name", event_name)
+        _set_extracted("city", ev, "city", city)
+        _set_extracted("format", ev, "format", event_type)
+        _set_extracted("target_size", ev, "target_size", target_size)
+        _set_extracted("event_date", event_state, "event_date", event_date_iso)
+
+        # Non-tracked fields still update normally — these aren't surfaced as
+        # editable header fields.
         ev["goal"] = goal
         ev["desired_attendees"] = desired_attendees
-        ev["target_size"] = target_size
-        ev["city"] = city
-        ev["format"] = event_type
         ev["success_metrics"] = success_metrics
-        # Only pre-fill event_date if extraction succeeded AND the user hasn't
-        # already set one (e.g. via the date picker between runs).
-        if event_date_iso and not (event_state.get("event_date") or "").strip():
-            event_state["event_date"] = event_date_iso
+
         state_meta = event_state.setdefault("state", {})
         state_meta.setdefault("open_questions", []).extend(open_questions)
 

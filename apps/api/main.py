@@ -112,6 +112,19 @@ input::placeholder,textarea::placeholder{color:var(--text-3)}
 .event-meta .meta-link:hover{background:var(--bg-alt);color:var(--text)}
 .event-meta .meta-link[data-empty="true"]{color:var(--text-3)}
 .event-meta .meta-link[data-empty="true"]:hover{color:var(--text)}
+.event-meta .meta-link[data-source="manual"]{font-weight:500;color:var(--text)}
+.manual-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--text);vertical-align:middle;margin-left:6px;opacity:0.55;border:0;padding:0;cursor:pointer;transition:opacity var(--t),transform var(--t)}
+.manual-dot:hover{opacity:1;transform:scale(1.4)}
+.event-name[data-source="manual"]{font-weight:600}
+.size-warning{margin-top:10px;font-size:12px;color:var(--text-2);line-height:1.5}
+.size-warning.firm{color:var(--text);border-left:2px solid var(--text);padding-left:10px}
+.size-warning.soft{color:var(--text-2);border-left:2px solid var(--border);padding-left:10px}
+.size-warning:empty{display:none}
+/* Reset-source popover (shares .popover styles) */
+.reset-pop{padding:10px 12px;font-size:12px}
+.reset-pop .reset-headline{color:var(--text);font-weight:500;margin-bottom:6px}
+.reset-pop .reset-body{color:var(--text-2);margin-bottom:10px;line-height:1.45}
+.reset-pop button{margin:0}
 
 /* Stat tiles */
 .stat-tiles{margin-top:24px;display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
@@ -330,6 +343,7 @@ table.list tr:hover .row-actions{opacity:1}
 
 <header class="page-header" id="page-header">
   <h1 class="event-name" id="event-name" data-empty="true" contenteditable="false" spellcheck="false">Untitled event</h1>
+  <button type="button" class="manual-dot manual-dot-name" id="dot-name" style="display:none;vertical-align:super;margin-left:6px" onclick="openResetPopover('name',event)" title="Manually set — click to reset"></button>
   <div class="event-meta" id="event-meta">
     <span class="meta-link" id="meta-date" data-empty="true" onclick="openDatePopover(event)">Set event date</span>
     <span class="sep">·</span>
@@ -363,8 +377,10 @@ table.list tr:hover .row-actions{opacity:1}
   <textarea id="brief" placeholder="100-person crypto hackathon for builders, founders, ZK researchers in SF…"></textarea>
   <div class="prompt-actions">
     <button id="go" class="btn btn-primary">Run pipeline</button>
+    <button id="go-search" class="btn btn-secondary" onclick="searchAllOrg()">Search venues, caterers, sponsors</button>
     <span id="status" class="muted"></span>
   </div>
+  <div id="size-warning" class="size-warning"></div>
   <div id="warn"></div>
 </section>
 
@@ -535,6 +551,16 @@ table.list tr:hover .row-actions{opacity:1}
   </div>
 </div>
 
+<!-- Reset-source popover -->
+<div class="popover reset-pop" id="reset-popover">
+  <div class="reset-headline" id="reset-popover-field">Manually set</div>
+  <div class="reset-body">Won't be overwritten by re-runs. Clear the lock to repopulate from the next prompt.</div>
+  <div class="pop-actions">
+    <button class="btn btn-tertiary btn-sm" onclick="closeResetPopover()">Cancel</button>
+    <button class="btn btn-primary btn-sm" onclick="confirmResetSource()">Reset to extracted</button>
+  </div>
+</div>
+
 <!-- Outreach modal -->
 <div class="modal-bg" id="msg-modal" onclick="if(event.target===this)closeMsg()">
   <div class="modal">
@@ -642,7 +668,9 @@ btn.onclick = async () => {
     renderResult(data, people);
     loadEventMeta();
     refreshAllStats();
-    autoFireOrgSearches();
+    // Org searches no longer auto-fire — the user reviews the extracted
+    // header fields first, optionally edits them, then explicitly clicks
+    // the "Search venues, caterers, sponsors" action.
   }catch(e){
     clearInterval(tick);
     statusEl.textContent = '';
@@ -742,43 +770,58 @@ async function loadEventMeta(){
 function refreshHeader(){
   const e = EVENT_META || {};
   const s = EVENT_SUMMARY_DATA || {};
-  // Event name
+  const sources = e.sources || {};
+
+  function dotHTML(fieldKey){
+    if(sources[fieldKey] !== 'manual') return '';
+    return ` <button type="button" class="manual-dot" onclick="openResetPopover('${fieldKey}', event)" title="Manually set — click to reset"></button>`;
+  }
+  function renderMeta(el, label, isEmpty, fieldKey){
+    el.innerHTML = escapeHtml(label) + dotHTML(fieldKey);
+    el.dataset.empty = isEmpty ? 'true' : 'false';
+    if(sources[fieldKey]) el.dataset.source = sources[fieldKey];
+    else delete el.dataset.source;
+  }
+
+  // Event name (contenteditable; the manual-dot is a sibling button so the
+  // reset popover stays clickable while editing).
   const nameEl = document.getElementById('event-name');
   const name = (e.name || s.name || '').trim();
   if(name){ nameEl.textContent = name; nameEl.dataset.empty = 'false'; }
   else { nameEl.textContent = 'Untitled event'; nameEl.dataset.empty = 'true'; }
+  if(sources.name) nameEl.dataset.source = sources.name; else delete nameEl.dataset.source;
+  document.getElementById('dot-name').style.display = sources.name === 'manual' ? 'inline-block' : 'none';
 
   // Date
   const dateEl = document.getElementById('meta-date');
+  let dateLabel = 'Set event date';
+  let dateEmpty = true;
   if(e.event_date){
     const human = fmtDateHuman(e.event_date);
     let suffix = '';
     if(e.event_end_time){ suffix = ' · ' + new Date(e.event_end_time).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}); }
     else if(e.event_date.includes('T')){ suffix = ' · ' + new Date(e.event_date).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}); }
-    dateEl.textContent = human + suffix;
-    dateEl.dataset.empty = 'false';
-  } else {
-    dateEl.textContent = 'Set event date';
-    dateEl.dataset.empty = 'true';
+    dateLabel = human + suffix; dateEmpty = false;
   }
+  renderMeta(dateEl, dateLabel, dateEmpty, 'event_date');
 
   // City
   const cityEl = document.getElementById('meta-city');
   const city = (e.city || s.city || '').trim();
-  if(city){ cityEl.textContent = city; cityEl.dataset.empty = 'false'; }
-  else { cityEl.textContent = 'Add location'; cityEl.dataset.empty = 'true'; }
+  renderMeta(cityEl, city || 'Add location', !city, 'city');
 
   // Format
   const fmtEl = document.getElementById('meta-format');
   const fmt = (e.format || s.format || '').trim();
-  if(fmt){ fmtEl.textContent = fmt; fmtEl.dataset.empty = 'false'; }
-  else { fmtEl.textContent = 'Add format'; fmtEl.dataset.empty = 'true'; }
+  renderMeta(fmtEl, fmt || 'Add format', !fmt, 'format');
 
   // Size
   TARGET_SIZE = +((e.target_size!=null?e.target_size:s.target_size)||0) || 0;
   const sizeEl = document.getElementById('meta-size');
-  sizeEl.textContent = TARGET_SIZE ? `${TARGET_SIZE} people` : '— people';
-  sizeEl.dataset.empty = TARGET_SIZE ? 'false' : 'true';
+  renderMeta(sizeEl, TARGET_SIZE ? `${TARGET_SIZE} people` : '— people', !TARGET_SIZE, 'target_size');
+
+  // Soft size warning below the prompt input.
+  refreshSizeWarning(TARGET_SIZE);
 
   // Days tile
   const daysEl = document.getElementById('stat-days');
@@ -1197,14 +1240,22 @@ function mailtoOrg(it){
   return `mailto:${encodeURIComponent(it.contact_email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 }
 
-async function autoFireOrgSearches(){
+async function searchAllOrg(){
+  // Explicit user-triggered fan-out using current header values (which
+  // include any manual edits — the source of truth for downstream agents).
+  // Replaces the previous auto-fire-after-/run behavior.
   let summary = null;
   try{ const r = await fetch('/event/summary'); if(r.ok){ summary = await r.json(); } }catch(_){}
-  if(!summary || !summary.ok) return;
+  if(!summary || !summary.ok){
+    alert('Run the pipeline first — there are no event details to search with yet.');
+    return;
+  }
   const queries = deriveOrgQueries(summary);
   if(!queries) return;
   const banner = document.getElementById('org-banner-meta');
   if(banner) banner.textContent = `${summary.target_size||'?'} ${summary.format||'event'} in ${summary.city||'?'}`;
+  // Switch to the Org tab so the user sees the searches stream in.
+  switchTab('org');
   ['venues','caterers','sponsors'].forEach(cat => {
     orgSearch(cat,{query:queries[cat],sort:'relevance',autoSourced:true,suppressActiveSwitch:true});
   });
@@ -1218,6 +1269,48 @@ function deriveOrgQueries(s){
     caterers: {location:city,cuisine:'',headcount,dietary:'',budget:''},
     sponsors: {industry:fmt,size:'',budget:'',notes:''},
   };
+}
+
+// ---------- Soft size warnings ----------
+function refreshSizeWarning(size){
+  const el = document.getElementById('size-warning');
+  if(!el) return;
+  if(!size || size <= 150){ el.className = 'size-warning'; el.textContent = ''; return; }
+  if(size > 200){
+    el.className = 'size-warning firm';
+    el.textContent = "Eventful is built for curated events under 200 people. Above this size, you'll likely want segmented outreach, public RSVP pages, or marketing tools — features Eventful doesn't currently offer.";
+    return;
+  }
+  el.className = 'size-warning soft';
+  el.textContent = "Eventful works best for events of 5–150 people, where every guest matters. Curated sourcing for larger groups may take longer and produce broader matches.";
+}
+
+// ---------- Reset-source popover ----------
+let RESET_FIELD = '';
+function openResetPopover(field, ev){
+  if(ev){ ev.stopPropagation(); ev.preventDefault(); }
+  RESET_FIELD = field;
+  const pop = document.getElementById('reset-popover');
+  const target = ev && ev.currentTarget ? ev.currentTarget : document.querySelector(`[data-source="manual"]`);
+  const rect = (target || document.body).getBoundingClientRect();
+  pop.style.top = (window.scrollY + rect.bottom + 6) + 'px';
+  pop.style.left = (window.scrollX + Math.max(8, rect.left - 60)) + 'px';
+  const labels = {name:'Event name', city:'Location', format:'Format', target_size:'Target size', event_date:'Event date', event_end_time:'End time'};
+  document.getElementById('reset-popover-field').textContent = (labels[field] || field) + ' — manually set';
+  pop.classList.add('show');
+  setTimeout(() => document.addEventListener('click', closeResetPopoverOnOutside, {once:true}), 0);
+}
+function closeResetPopoverOnOutside(e){
+  const pop = document.getElementById('reset-popover');
+  if(!pop.contains(e.target)) closeResetPopover();
+  else setTimeout(() => document.addEventListener('click', closeResetPopoverOnOutside, {once:true}), 0);
+}
+function closeResetPopover(){ document.getElementById('reset-popover').classList.remove('show'); }
+async function confirmResetSource(){
+  if(!RESET_FIELD) return;
+  await fetch('/event/source/' + encodeURIComponent(RESET_FIELD), {method:'DELETE'});
+  closeResetPopover();
+  loadEventMeta();
 }
 
 // ---------- Budget tab ----------
