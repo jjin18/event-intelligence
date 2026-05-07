@@ -376,7 +376,7 @@ table.list tr:hover .row-actions{opacity:1}
 <section class="prompt-section">
   <textarea id="brief" placeholder="100-person crypto hackathon for builders, founders, ZK researchers in SF…"></textarea>
   <div class="prompt-actions">
-    <button id="go" class="btn btn-primary">Run pipeline</button>
+    <button id="go" class="btn btn-primary">Run agent</button>
     <span id="status" class="muted"></span>
   </div>
   <div id="size-warning" class="size-warning"></div>
@@ -643,7 +643,7 @@ fetch('/health').then(r=>r.json()).then(h=>{
   }
 });
 
-// ---------- Run pipeline ----------
+// ---------- Run agent ----------
 const btn = document.getElementById('go'), statusEl = document.getElementById('status');
 btn.onclick = async () => {
   const brief = document.getElementById('brief').value.trim();
@@ -659,7 +659,7 @@ btn.onclick = async () => {
   try{
     const r = await fetch('/run', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({brief_text:brief})});
     const data = await r.json();
-    if(!r.ok) throw new Error(data.detail || 'pipeline failed');
+    if(!r.ok) throw new Error(data.detail || 'agent failed');
     clearInterval(tick);
     statusEl.textContent = `done in ${((Date.now()-t0)/1000).toFixed(1)}s`;
     const peopleResp = await fetch('/people');
@@ -667,9 +667,13 @@ btn.onclick = async () => {
     renderResult(data, people);
     loadEventMeta();
     refreshAllStats();
-    // Org searches no longer auto-fire — the user reviews the extracted
-    // header fields first, optionally edits them, then explicitly clicks
-    // the "Search venues, caterers, sponsors" action.
+    // Auto-fire Org searches after the pipeline finishes — previous spec
+    // had this off so the user could review the header first; current
+    // direction is to run all three in the background so the Organization
+    // tab is populated by the time they switch over. Manual edits to the
+    // header still feed Org searches the user explicitly re-runs from
+    // inside the Org tab.
+    autoFireOrgSearches();
   }catch(e){
     clearInterval(tick);
     statusEl.textContent = '';
@@ -1317,11 +1321,24 @@ function mailtoOrg(it){
   return `mailto:${encodeURIComponent(it.contact_email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 }
 
-// Note: a global "Search venues, caterers, sponsors" fan-out used to live
-// here. Removed per cascade-pattern spec — searches are now strictly
-// per-category and only fire on the user's explicit click inside the
-// Organization tab, never automatically. deriveOrgQueries is still used by
-// the cascading auto-fill of the Org form inputs.
+// Auto-fire all three Org categories using the current header values.
+// Used after a /run completes so the Organization tab is populated by the
+// time the user switches over. Honors the same hard-constraint location
+// filtering the per-category Search buttons do — those still work for
+// refining one category at a time.
+async function autoFireOrgSearches(){
+  let summary = null;
+  try{ const r = await fetch('/event/summary'); if(r.ok){ summary = await r.json(); } }catch(_){}
+  if(!summary || !summary.ok) return;
+  const queries = deriveOrgQueries(summary);
+  if(!queries) return;
+  const banner = document.getElementById('org-banner-meta');
+  if(banner) banner.textContent = `${summary.target_size||'?'} ${summary.format||'event'} in ${summary.city||'?'}`;
+  ['venues','caterers','sponsors'].forEach(cat => {
+    orgSearch(cat, {query:queries[cat], sort:'relevance', autoSourced:true, suppressActiveSwitch:true});
+  });
+}
+
 function deriveOrgQueries(s){
   const headcount = s.target_size || 100;
   const city = s.city || '';
