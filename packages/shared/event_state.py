@@ -154,6 +154,7 @@ class Budget:
 # paths they always have.
 TRACKED_HEADER_FIELDS: tuple[str, ...] = (
     "name", "city", "format", "target_size", "event_date", "event_end_time",
+    "total_budget",
 )
 
 

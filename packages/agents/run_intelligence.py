@@ -17,6 +17,7 @@ Outputs:
 """
 from __future__ import annotations
 
+import os
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -212,6 +213,23 @@ def run_pipeline(
     state.setdefault("people", {})["ranked_prospects"] = ranked
 
     room_balance_agent.run(ranked, target_size=objective.get("target_size", 100), event_state=state)
+
+    # Contact discovery folded into the pipeline. The standalone "Discover
+    # contacts" button is gone — the Contact column has to be populated by
+    # the time the EI tab renders, per the cascade-pattern spec.
+    # only_missing=True so re-runs don't re-bill for already-enriched people.
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        try:
+            from packages.enrichment.contact_finder import discover_contacts
+            targets = [p for p in ranked if not (p.get("email") or p.get("linkedin_url"))]
+            # Cap at 25 by default to keep cost bounded — same behavior the
+            # standalone /contacts/discover endpoint had.
+            contact_limit = int(os.environ.get("EI_CONTACT_LIMIT", "25"))
+            if targets and contact_limit > 0:
+                discover_contacts(targets[:contact_limit])
+        except Exception as exc:  # noqa: BLE001
+            # Don't fail the whole pipeline if contact discovery has a hiccup.
+            print(f"[run_intelligence] contact discovery error (non-fatal): {exc!r}", file=sys.stderr)
 
     files_written: list[str] = []
     esp = cfg.event_state_path

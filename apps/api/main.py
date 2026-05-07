@@ -377,7 +377,6 @@ table.list tr:hover .row-actions{opacity:1}
   <textarea id="brief" placeholder="100-person crypto hackathon for builders, founders, ZK researchers in SF…"></textarea>
   <div class="prompt-actions">
     <button id="go" class="btn btn-primary">Run pipeline</button>
-    <button id="go-search" class="btn btn-secondary" onclick="searchAllOrg()">Search venues, caterers, sponsors</button>
     <span id="status" class="muted"></span>
   </div>
   <div id="size-warning" class="size-warning"></div>
@@ -691,8 +690,6 @@ function renderResult(s, people){
     <div class="ei-actions">
       <a class="btn btn-secondary btn-sm" href="/download/ranked_people.csv" download>Download CSV</a>
       <a class="btn btn-tertiary btn-sm" href="/download/event_state.json" download>event_state.json</a>
-      <button class="btn btn-secondary btn-sm" id="btn-discover">Discover contacts</button>
-      <span id="discover-status" class="dim" style="font-size:12px"></span>
     </div>
   </div>`;
   html += `<table class="list">
@@ -712,7 +709,6 @@ function renderResult(s, people){
   html += '</tbody></table>';
   if(people.length > 30) html += `<div class="dim" style="font-size:12px;margin-top:10px">${people.length - 30} more in ranked_people.csv</div>`;
   root.innerHTML = html;
-  document.getElementById('btn-discover').onclick = discoverContacts;
 }
 
 function contactIcons(p){
@@ -729,23 +725,10 @@ function contactIcons(p){
   return `<span class="contact-icons">${items.join('')}</span>`;
 }
 
-async function discoverContacts(){
-  const dbtn = document.getElementById('btn-discover');
-  const dst = document.getElementById('discover-status');
-  if(dbtn) dbtn.disabled = true;
-  if(dst) dst.innerHTML = '<span class="spinner"></span>searching the web…';
-  try{
-    const r = await fetch('/contacts/discover',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({only_missing:true})});
-    const data = await r.json();
-    if(!r.ok) throw new Error(data.detail||'discovery failed');
-    if(dst) dst.textContent = `enriched ${data.enriched} of ${data.considered}`;
-    const peopleResp = await fetch('/people');
-    const people = (await peopleResp.json()).people || [];
-    renderResult(EVENT_SUMMARY, people);
-  }catch(e){
-    if(dst) dst.textContent = 'failed: ' + e.message;
-  }finally{ if(dbtn) dbtn.disabled = false; }
-}
+// (Standalone discoverContacts() removed — contact discovery now runs as
+// part of the main pipeline in packages.agents.run_intelligence so the
+// Contact column is populated by the time the EI table first renders.)
+
 
 function emptyState(title, line, icon){
   const ICONS = {
@@ -764,7 +747,67 @@ async function loadEventMeta(){
     const sumr = await fetch('/event/summary');
     if(sumr.ok){ EVENT_SUMMARY_DATA = await sumr.json(); }
     refreshHeader();
+    cascadeFromHeader();
   }catch(_){}
+}
+
+// ---------- Cascading auto-fill ----------
+// Tracks form fields the user has typed into. Cascades skip these so the
+// header changing doesn't blow away in-progress edits.
+const TAB_FORM_TOUCHED = new Set();
+
+function trackTabFormTouches(){
+  const ids = [
+    'v-location','v-capacity','v-availability','v-amenities','v-budget',
+    'c-location','c-cuisine','c-headcount','c-dietary','c-budget',
+    's-industry','s-size','s-budget','s-notes',
+    'bd-total','bd-sponsor',
+  ];
+  ids.forEach(id => {
+    const el = document.getElementById(id);
+    if(!el || el.dataset.cascadeTracker) return;
+    el.dataset.cascadeTracker = '1';
+    el.addEventListener('input', () => TAB_FORM_TOUCHED.add(id));
+  });
+}
+
+function _fill(id, val){
+  if(TAB_FORM_TOUCHED.has(id)) return;
+  const el = document.getElementById(id);
+  if(!el) return;
+  // Always reflect the latest header value into untouched cascade targets.
+  // This lets header edits propagate live to forms in unsearched tabs.
+  el.value = (val == null ? '' : String(val));
+}
+
+function cascadeFromHeader(){
+  trackTabFormTouches();
+  const e = EVENT_META || {};
+  const s = EVENT_SUMMARY_DATA || {};
+  const city = (e.city || s.city || '').trim();
+  const cap = +(e.target_size || s.target_size || 0) || 0;
+  const fmt = (e.format || s.format || '').trim();
+  const dateLabel = e.event_date ? fmtDateHuman(e.event_date) : '';
+
+  // Org tab — but only for categories the user hasn't already searched.
+  // Searched/actioned categories keep their query state per the cascade
+  // rule in the spec.
+  function isUnsearched(cat){
+    const st = (typeof ORG_STATE === 'object' && ORG_STATE) ? ORG_STATE[cat] : null;
+    return !st || st.status === 'idle' || !st.status;
+  }
+  if(isUnsearched('venues')){
+    if(city) _fill('v-location', city);
+    if(cap) _fill('v-capacity', cap);
+    if(dateLabel) _fill('v-availability', dateLabel);
+  }
+  if(isUnsearched('caterers')){
+    if(city) _fill('c-location', city);
+    if(cap) _fill('c-headcount', cap);
+  }
+  if(isUnsearched('sponsors')){
+    if(fmt) _fill('s-industry', fmt);
+  }
 }
 
 function refreshHeader(){
@@ -1108,16 +1151,19 @@ async function orgSearch(cat, opts){
   const q = opts.query || buildQuery(cat);
   const sortId = cat==='venues'?'v-sort':cat==='caterers'?'c-sort':'s-sort';
   const sort = opts.sort || (document.getElementById(sortId).value||'relevance');
-  ORG_STATE[cat] = {status:'loading',results:[],error:'',sort,autoSourced:!!opts.autoSourced};
+  ORG_STATE[cat] = {status:'loading',results:[],error:'',sort,autoSourced:!!opts.autoSourced,lastQuery:q};
   if(!opts.suppressActiveSwitch && ORG_CAT !== cat) switchCat(cat);
   if(ORG_CAT === cat){ renderOrgCards(); refreshOrgStatus(); }
   try{
     const r = await fetch('/org/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({category:cat,query:q,sort})});
     const data = await r.json();
     if(!r.ok) throw new Error(data.detail || 'search failed');
-    ORG_STATE[cat] = {status:'ok',results:data.results||[],error:'',sort,autoSourced:!!opts.autoSourced,telemetry:data.telemetry};
+    // Honor server-side telemetry status when the post-filter dropped everything,
+    // so the empty-state copy can explain WHY rather than say "no results".
+    const finalStatus = (data.results||[]).length ? 'ok' : ((data.telemetry||{}).status || 'empty');
+    ORG_STATE[cat] = {status:finalStatus,results:data.results||[],error:'',sort,autoSourced:!!opts.autoSourced,telemetry:data.telemetry,lastQuery:q};
   }catch(e){
-    ORG_STATE[cat] = {status:'error',results:[],error:e.message,sort,autoSourced:!!opts.autoSourced};
+    ORG_STATE[cat] = {status:'error',results:[],error:e.message,sort,autoSourced:!!opts.autoSourced,lastQuery:q};
   }
   if(ORG_CAT === cat){ renderOrgCards(); refreshOrgStatus(); }
 }
@@ -1131,7 +1177,21 @@ function refreshOrgStatus(){
   if(SHOWING_SAVED){ el.textContent = `${getSaved().length} saved`; return; }
   if(st.status === 'loading'){ el.innerHTML = '<span class="spinner"></span>searching…'; }
   else if(st.status === 'error'){ el.textContent = ''; }
-  else if(st.status === 'ok'){ el.textContent = `${st.results.length} result${st.results.length===1?'':'s'}`; if(st.telemetry) meta.textContent = `${st.telemetry.duration_s||''}s${st.telemetry.cache_hit?' · cached':''}`; }
+  else if(st.status === 'ok' || st.status === 'filtered_empty' || st.status === 'empty'){
+    const t = st.telemetry || {};
+    const filteredOff = +(t.filtered_off_location || 0);
+    const filteredCap = +(t.filtered_under_capacity || 0);
+    const dropTotal = filteredOff + filteredCap;
+    let parts = [`${st.results.length} result${st.results.length===1?'':'s'}`];
+    if(dropTotal){
+      const bits = [];
+      if(filteredOff) bits.push(`${filteredOff} off-location`);
+      if(filteredCap) bits.push(`${filteredCap} under-capacity`);
+      parts.push(`filtered ${bits.join(' · ')}`);
+    }
+    el.textContent = parts.join(' · ');
+    if(st.telemetry) meta.textContent = `${t.duration_s||''}${t.duration_s?'s':''}${t.cache_hit?' · cached':''}`;
+  }
   else el.textContent = '';
 }
 
@@ -1166,10 +1226,27 @@ function renderOrgCards(){
   }
   if(st.status === 'loading'){ root.innerHTML = '<div class="empty" style="padding:32px"><span class="spinner"></span><span style="margin-left:8px">searching ' + ORG_CAT + '…</span></div>'; return; }
   if(st.status === 'error'){ root.innerHTML = `<div class="banner banner-error"><span>${escapeHtml(st.error||'search failed')}</span><button class="btn btn-secondary btn-sm" onclick="retryCategory('${ORG_CAT}')">Retry</button></div>`; return; }
-  if(st.status === 'ok'){
-    root.innerHTML = st.results.length
-      ? st.results.map((it,i) => orgCardHtml(it,i)).join('')
-      : emptyState('No results','Try broadening the query or removing filters.','list');
+  if(st.status === 'ok' || st.status === 'empty' || st.status === 'filtered_empty'){
+    if(st.results.length){
+      root.innerHTML = st.results.map((it,i) => orgCardHtml(it,i)).join('');
+      return;
+    }
+    // Honest empty-state copy when the post-filter dropped everything —
+    // don't pretend search failed, tell the user what happened.
+    const t = st.telemetry || {};
+    const where = (st.lastQuery && st.lastQuery.location) || '';
+    const cap = (st.lastQuery && (st.lastQuery.capacity || st.lastQuery.headcount)) || 0;
+    if(st.status === 'filtered_empty' || (t.filtered_off_location||0) + (t.filtered_under_capacity||0) > 0){
+      const where2 = where ? ` in ${escapeHtml(where)}` : '';
+      const cap2 = cap ? ` for ${escapeHtml(cap)}-person events` : '';
+      root.innerHTML = emptyState(
+        `No ${ORG_CAT}${where2}${cap2}`,
+        `Returned results didn't match the requested location or capacity. Try widening the search or relaxing filters.`,
+        'list'
+      );
+    } else {
+      root.innerHTML = emptyState('No results', 'Try broadening the query or removing filters.', 'list');
+    }
     return;
   }
   root.innerHTML = emptyState('Run a search', `Configure the form above and search for ${ORG_CAT}.`, 'list');
@@ -1240,26 +1317,11 @@ function mailtoOrg(it){
   return `mailto:${encodeURIComponent(it.contact_email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 }
 
-async function searchAllOrg(){
-  // Explicit user-triggered fan-out using current header values (which
-  // include any manual edits — the source of truth for downstream agents).
-  // Replaces the previous auto-fire-after-/run behavior.
-  let summary = null;
-  try{ const r = await fetch('/event/summary'); if(r.ok){ summary = await r.json(); } }catch(_){}
-  if(!summary || !summary.ok){
-    alert('Run the pipeline first — there are no event details to search with yet.');
-    return;
-  }
-  const queries = deriveOrgQueries(summary);
-  if(!queries) return;
-  const banner = document.getElementById('org-banner-meta');
-  if(banner) banner.textContent = `${summary.target_size||'?'} ${summary.format||'event'} in ${summary.city||'?'}`;
-  // Switch to the Org tab so the user sees the searches stream in.
-  switchTab('org');
-  ['venues','caterers','sponsors'].forEach(cat => {
-    orgSearch(cat,{query:queries[cat],sort:'relevance',autoSourced:true,suppressActiveSwitch:true});
-  });
-}
+// Note: a global "Search venues, caterers, sponsors" fan-out used to live
+// here. Removed per cascade-pattern spec — searches are now strictly
+// per-category and only fire on the user's explicit click inside the
+// Organization tab, never automatically. deriveOrgQueries is still used by
+// the cascading auto-fill of the Org form inputs.
 function deriveOrgQueries(s){
   const headcount = s.target_size || 100;
   const city = s.city || '';
@@ -1475,7 +1537,20 @@ async function loadAttendees(){
 
 function renderAttSummary(){
   const s = ATT_STATE.summary;
-  document.getElementById('att-summary-text').innerHTML = `<b>${s.total||0}</b> invited · <b>${s.confirmed||0}</b> confirmed · <b>${s.declined||0}</b> declined`;
+  const e = EVENT_META || {};
+  const targetSize = +(e.target_size || (EVENT_SUMMARY_DATA||{}).target_size || 0) || 0;
+  const parts = [];
+  if(targetSize) parts.push(`Target: <b>${targetSize}</b> attendees`);
+  parts.push(`<b>${s.total||0}</b> invited`);
+  parts.push(`<b>${s.confirmed||0}</b> confirmed`);
+  parts.push(`<b>${s.declined||0}</b> declined`);
+  // Event date + location appear on the Attendees top section per spec.
+  const meta = [];
+  if(e.event_date) meta.push(fmtDateHuman(e.event_date));
+  if(e.city) meta.push(e.city);
+  const summaryLine = parts.join(' · ');
+  const metaLine = meta.length ? `<div class="dim" style="font-size:12px;margin-top:4px">${escapeHtml(meta.join(' · '))}</div>` : '';
+  document.getElementById('att-summary-text').innerHTML = summaryLine + metaLine;
 }
 
 function setAttendeeFilter(f){

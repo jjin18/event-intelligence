@@ -70,6 +70,9 @@ class TotalBody(BaseModel):
 async def put_total(body: TotalBody) -> dict:
     def _apply(state: dict) -> dict:
         state.setdefault("budget", {})["total_budget"] = float(body.total_budget)
+        # Stamp manual provenance so a later pipeline run won't overwrite
+        # the user's edit with whatever the brief mentions.
+        state.setdefault("event_field_sources", {})["total_budget"] = "manual"
         return state["budget"]
 
     budget = mutate_state(_apply)
