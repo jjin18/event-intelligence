@@ -153,6 +153,40 @@ def _extract_date(text: str, today: Optional[date] = None) -> str:
     return ""
 
 
+def _extract_budget(text: str) -> int:
+    """Pull a total budget out of the brief, in whole dollars.
+
+    Recognizes "$10,000", "$10k", "$10K", "10k budget", "20,000 dollars".
+    Returns 0 when no budget phrasing is present. Conservative — falls back
+    silently rather than hallucinating a number from arbitrary integers in
+    the brief.
+    """
+    if not text:
+        return 0
+    t = text.lower()
+    # "$10k", "$10K", "$10,000", "$1.5k"
+    m = re.search(r"\$\s*([0-9][0-9,\.]*)\s*(k|m|million)?\b", t)
+    if not m:
+        # "10k budget", "20k sponsorship budget"
+        m = re.search(r"\b([0-9][0-9,\.]*)\s*(k|m|million)\s*(?:budget|sponsorship|dollars?)", t)
+    if not m:
+        # "10,000 dollars budget"
+        m = re.search(r"\b([0-9][0-9,]+)\s*(?:dollars?|usd)?\s*budget", t)
+    if not m:
+        return 0
+    raw = m.group(1).replace(",", "")
+    try:
+        amount = float(raw)
+    except ValueError:
+        return 0
+    suffix = (m.group(2) or "").lower() if m.lastindex and m.lastindex >= 2 else ""
+    if suffix == "k":
+        amount *= 1_000
+    elif suffix in ("m", "million"):
+        amount *= 1_000_000
+    return int(amount)
+
+
 def _coerce_size(value: Any, brief: str, default: int) -> int:
     if isinstance(value, int) and value > 0:
         return value
@@ -209,6 +243,9 @@ def run(brief: str, constraints: Optional[dict[str, Any]] = None,
     # from the legacy event_state["event"]["date"] which is unrelated state).
     event_date_iso = (intent.get("event_date") or "").strip() or _extract_date(brief)
 
+    # Pre-fill total budget from the brief (regex; never hallucinates).
+    extracted_budget = _extract_budget(brief)
+
     success_metrics = [
         f"{target_size} RSVPs",
         f"{int(target_size * 0.6)}-{int(target_size * 0.7)} actual attendees",
@@ -254,6 +291,16 @@ def run(brief: str, constraints: Optional[dict[str, Any]] = None,
         _set_extracted("format", ev, "format", event_type)
         _set_extracted("target_size", ev, "target_size", target_size)
         _set_extracted("event_date", event_state, "event_date", event_date_iso)
+
+        # Budget cascade: pre-fill total_budget from the brief only when the
+        # user hasn't manually set one. Tracked under the same provenance
+        # map so it stays sticky on re-runs once the user edits it.
+        if extracted_budget > 0 and sources.get("total_budget") != "manual":
+            budget = event_state.setdefault("budget", {})
+            current_total = float(budget.get("total_budget") or 0)
+            if current_total <= 0:
+                budget["total_budget"] = float(extracted_budget)
+                sources["total_budget"] = "extracted"
 
         # Non-tracked fields still update normally — these aren't surfaced as
         # editable header fields.

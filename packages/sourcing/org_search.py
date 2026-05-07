@@ -75,6 +75,57 @@ SPONSOR_SCHEMA = """{
 }"""
 
 
+def _hard_constraints(category: str, query: dict[str, Any]) -> str:
+    """Build a HARD-CONSTRAINT block that's separate from the soft filters.
+
+    Empty fields produce no constraint (the model sees a permissive search);
+    populated fields produce explicit "must be in X / must accommodate N"
+    language so the model treats them as filters, not weights.
+    """
+    lines: list[str] = []
+    location = (str(query.get("location") or "")).strip()
+    if location and category in ("venues", "caterers"):
+        kind = "venues" if category == "venues" else "caterers"
+        lines.append(
+            f"- LOCATION: only return {kind} physically located in {location}. "
+            f"Do not include results from other cities, regions, or countries. "
+            f"If you cannot find enough options in {location}, return fewer "
+            f"results rather than expanding the search area."
+        )
+
+    if category == "venues":
+        cap = query.get("capacity")
+        try:
+            cap_int = int(cap) if cap not in (None, "") else 0
+        except (TypeError, ValueError):
+            cap_int = 0
+        if cap_int > 0:
+            lines.append(
+                f"- CAPACITY: only return venues that can comfortably host at "
+                f"least {cap_int} attendees. Do not include rooms whose stated "
+                f"max capacity is below this number."
+            )
+    elif category == "caterers":
+        head = query.get("headcount")
+        try:
+            head_int = int(head) if head not in (None, "") else 0
+        except (TypeError, ValueError):
+            head_int = 0
+        if head_int > 0:
+            lines.append(
+                f"- HEADCOUNT: only return caterers willing to serve at least "
+                f"{head_int} people. Drop caterers whose minimum order or stated "
+                f"capacity is meaningfully higher than {head_int}."
+            )
+
+    if not lines:
+        return ""
+    return (
+        "# Hard constraints (must satisfy ALL of these — return fewer results "
+        "rather than violate any)\n" + "\n".join(lines) + "\n"
+    )
+
+
 def _build_prompt(category: str, query: dict[str, Any]) -> str:
     if category == "venues":
         schema = VENUE_SCHEMA
@@ -84,8 +135,6 @@ def _build_prompt(category: str, query: dict[str, Any]) -> str:
             "own site, or similar public listings. Do NOT invent venues."
         )
         filters = (
-            f"Location: {query.get('location') or 'any'}\n"
-            f"Capacity needed: {query.get('capacity') or 'any'}\n"
             f"Date/availability: {query.get('availability') or 'flexible'}\n"
             f"Required amenities: {query.get('amenities') or 'none specified'}\n"
             f"Budget: {query.get('budget') or 'flexible'}"
@@ -98,10 +147,8 @@ def _build_prompt(category: str, query: dict[str, Any]) -> str:
             "invent businesses."
         )
         filters = (
-            f"Location: {query.get('location') or 'any'}\n"
             f"Cuisine: {query.get('cuisine') or 'flexible'}\n"
             f"Dietary needs: {query.get('dietary') or 'none specified'}\n"
-            f"Headcount: {query.get('headcount') or 'unspecified'}\n"
             f"Budget per head: {query.get('budget_per_head') or 'flexible'}"
         )
     elif category == "sponsors":
@@ -121,12 +168,13 @@ def _build_prompt(category: str, query: dict[str, Any]) -> str:
         raise ValueError(f"Unknown category: {category}")
 
     n = max(1, min(int(query.get("limit") or 12), 25))
+    hard = _hard_constraints(category, query)
     return f"""You are sourcing real, publicly-listed options for an event organizer's "Organization" tool.
 
 # Category
 {category}
 
-# Filters
+{hard}# Soft filters (use these to rank/select; relax if you'd otherwise return nothing)
 {filters}
 
 # Sourcing rules
@@ -139,7 +187,7 @@ Return STRICTLY a JSON array of ~{n} objects matching this schema, with no surro
   {schema}
 ]
 
-Return ONLY the JSON array."""
+Return ONLY the JSON array. If no real options satisfy the hard constraints, return [] rather than stretching."""
 
 
 def _parse(raw: str) -> list[dict[str, Any]]:
@@ -156,6 +204,95 @@ def _parse(raw: str) -> list[dict[str, Any]]:
     except json.JSONDecodeError:
         return []
     return data if isinstance(data, list) else []
+
+
+# Common abbreviations the model uses interchangeably with their full names.
+# Both directions: typing "SF" should match a result city of "San Francisco",
+# and typing "San Francisco" should match a result city of "SF".
+_CITY_ALIASES: dict[str, list[str]] = {
+    "sf": ["san francisco"],
+    "san francisco": ["sf"],
+    "nyc": ["new york", "new york city", "manhattan"],
+    "new york": ["nyc", "new york city", "manhattan"],
+    "new york city": ["nyc", "new york", "manhattan"],
+    "la": ["los angeles"],
+    "los angeles": ["la"],
+    "dc": ["washington", "washington dc", "washington d.c."],
+    "washington": ["dc", "washington dc", "washington d.c."],
+}
+
+
+def _location_match(requested: str, candidate_text: str) -> bool:
+    """Lenient city match: case-insensitive substring + a small alias table.
+
+    Designed to keep "San Francisco, CA" / "SF, California" / "downtown SF"
+    as matches for an SF query, while rejecting "San Diego" or "Oakland".
+    """
+    if not requested:
+        return True
+    if not candidate_text:
+        return False
+    req = requested.strip().lower()
+    cand = candidate_text.strip().lower()
+    if req in cand or cand in req:
+        return True
+    for alias in _CITY_ALIASES.get(req, []):
+        if alias in cand:
+            return True
+    return False
+
+
+def _post_filter(category: str, query: dict[str, Any], results: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """Drop results that violate the hard constraints the prompt asked for.
+
+    Returns (kept, dropped_counts). dropped_counts has integer counts under
+    keys "off_location" and "under_capacity" so the API can surface a small
+    "filtered N off-location results" note to the user.
+    """
+    requested_location = str(query.get("location") or "").strip()
+    requested_cap = 0
+    if category == "venues":
+        try:
+            requested_cap = int(query.get("capacity") or 0)
+        except (TypeError, ValueError):
+            requested_cap = 0
+    elif category == "caterers":
+        try:
+            requested_cap = int(query.get("headcount") or 0)
+        except (TypeError, ValueError):
+            requested_cap = 0
+
+    # Allow some give: a 90-cap room for a 100-person event isn't a wrong-cap
+    # result, just slightly tight. Drop only when meaningfully under.
+    cap_floor = int(requested_cap * 0.8) if requested_cap > 0 else 0
+
+    kept: list[dict[str, Any]] = []
+    dropped = {"off_location": 0, "under_capacity": 0}
+
+    for r in results:
+        # Location check (venues + caterers only — sponsors don't take location)
+        if requested_location and category in ("venues", "caterers"):
+            field = "city" if category == "venues" else "location"
+            cand_loc = str(r.get(field) or "")
+            # Some agents put the city inside the address — check that too.
+            cand_addr = str(r.get("address") or "")
+            if not (_location_match(requested_location, cand_loc) or _location_match(requested_location, cand_addr)):
+                dropped["off_location"] += 1
+                continue
+        # Capacity / headcount check (venues only — caterers' "minimum order"
+        # is text and isn't a reliable structured field to filter on)
+        if cap_floor > 0 and category == "venues":
+            cap = r.get("capacity")
+            try:
+                cap_int = int(cap) if cap not in (None, "") else 0
+            except (TypeError, ValueError):
+                cap_int = 0
+            # cap_int == 0 means "unknown" — keep it; we don't punish missing data.
+            if cap_int and cap_int < cap_floor:
+                dropped["under_capacity"] += 1
+                continue
+        kept.append(r)
+    return kept, dropped
 
 
 def search(category: str, query: dict[str, Any], *,
@@ -177,9 +314,10 @@ def search(category: str, query: dict[str, Any], *,
     # canonicalize query for cache key
     canonical_query = json.dumps(query, sort_keys=True, default=str)
 
-    # cache check
+    # Cache check — version bumped to v2 so any pre-fix wrong-location
+    # entries on disk are simply skipped (they live under v1).
     from packages.shared import cache as _cache
-    cache_parts = (model, "v1", category, canonical_query)
+    cache_parts = (model, "v2", category, canonical_query)
     cached = _cache.get("org_search", *cache_parts)
     if cached is not None:
         telemetry["status"] = "cached"
@@ -207,9 +345,24 @@ def search(category: str, query: dict[str, Any], *,
         response = stream.get_final_message()
 
     text = "\n".join(b.text for b in response.content if getattr(b, "type", "") == "text")
-    results = _parse(text)
-    telemetry["status"] = "ok" if results else "empty"
+    raw_results = _parse(text)
+    raw_count = len(raw_results)
+
+    # Hard-constraint post-filter: drop results whose city / capacity don't
+    # match what the prompt asked for. Sponsors are unaffected (no location).
+    results, dropped = _post_filter(category, query, raw_results)
+
+    telemetry["status"] = "ok" if results else ("empty" if not raw_results else "filtered_empty")
     telemetry["count"] = len(results)
+    telemetry["raw_count"] = raw_count
+    telemetry["filtered_off_location"] = dropped["off_location"]
+    telemetry["filtered_under_capacity"] = dropped["under_capacity"]
+    if dropped["off_location"] or dropped["under_capacity"]:
+        telemetry["notes"].append(
+            f"Post-filter dropped {dropped['off_location']} off-location and "
+            f"{dropped['under_capacity']} under-capacity results."
+        )
+
     if hasattr(response, "usage"):
         stu = getattr(response.usage, "server_tool_use", None)
         # ServerToolUsage is a namedtuple-ish object — serialize to a plain dict.
@@ -224,6 +377,7 @@ def search(category: str, query: dict[str, Any], *,
             "output_tokens": response.usage.output_tokens,
             "server_tool_use": stu_dict,
         }
+    # Cache the post-filtered results so a re-search hits clean data.
     if results:
         _cache.put("org_search", results, *cache_parts)
     return results, telemetry
