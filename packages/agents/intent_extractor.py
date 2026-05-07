@@ -45,6 +45,15 @@ def extract_event_intent(brief: str) -> dict[str, Any]:
 
 
 def _extract_via_llm(brief: str) -> dict[str, Any] | None:
+    # File-backed cache by (model, version, brief). Re-running an identical
+    # brief is free — no LLM call. Bumps version when the prompt changes.
+    from packages.shared import cache as _cache
+
+    cache_parts = (MODEL, "v1", brief)
+    cached = _cache.get("intent_extractor", *cache_parts)
+    if isinstance(cached, dict):
+        return cached
+
     prompt = f"""An organizer described an event in free text. Extract their intent into JSON only.
 
 Return STRICTLY one JSON object (no markdown fences, no prose) with:
@@ -87,6 +96,7 @@ Organizer message:
         data = json.loads(payload)
         if not isinstance(data, dict):
             return None
+        _cache.put("intent_extractor", data, *cache_parts)
         return data
     except Exception:
         return None

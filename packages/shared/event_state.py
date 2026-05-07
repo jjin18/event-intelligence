@@ -147,6 +147,16 @@ class Budget:
     line_items: list[dict] = field(default_factory=list)
 
 
+# Header fields tracked for provenance ("manual" vs "extracted").
+# Keys are flat names; values live in their existing locations
+# (event.name / event.city / event.format / event.target_size /
+# event_date / event_end_time) so agents continue reading the same
+# paths they always have.
+TRACKED_HEADER_FIELDS: tuple[str, ...] = (
+    "name", "city", "format", "target_size", "event_date", "event_end_time",
+)
+
+
 @dataclass
 class EventState:
     event: EventInfo = field(default_factory=EventInfo)
@@ -163,6 +173,9 @@ class EventState:
     event_end_time: Optional[str] = None  # ISO 8601 datetime, nullable
     budget: Budget = field(default_factory=Budget)
     attendees: list[dict] = field(default_factory=list)
+    # Provenance of each header field: "manual" | "extracted" | absent.
+    # Manual values are sticky — re-running the pipeline leaves them alone.
+    event_field_sources: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
