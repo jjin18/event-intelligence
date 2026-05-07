@@ -336,11 +336,73 @@ table.list tr:hover .row-actions{opacity:1}
 .spinner{display:inline-block;width:12px;height:12px;border:1.5px solid var(--border);border-top-color:var(--text);border-radius:50%;animation:spin 600ms linear infinite;vertical-align:middle;margin-right:6px}
 @keyframes spin{to{transform:rotate(360deg)}}
 .kbd-hint{font-size:11px;color:var(--text-3);margin-left:4px}
+
+/* ---- Notion-style layout ---- */
+html,body{height:100%}
+.app-layout{display:flex;height:100vh;overflow:hidden}
+
+/* Sidebar */
+.sidebar{width:220px;flex-shrink:0;height:100vh;overflow-y:auto;background:var(--bg-soft);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:8px 0}
+.sidebar-logo{padding:10px 14px 10px;font:600 13px var(--font);color:var(--text);display:flex;align-items:center;gap:8px;letter-spacing:-0.01em}
+.sidebar-logo svg{width:15px;height:15px;flex-shrink:0;opacity:0.7}
+.sb-section-label{padding:14px 14px 3px;font:500 10px var(--font);color:var(--text-3);text-transform:uppercase;letter-spacing:0.08em}
+.sb-item{display:flex;align-items:center;gap:8px;padding:6px 10px;margin:1px 6px;border-radius:var(--r-sm);cursor:pointer;color:var(--text-2);font:400 13px var(--font);transition:all var(--t);user-select:none}
+.sb-item:hover{background:var(--bg);color:var(--text)}
+.sb-item.active{background:var(--bg);color:var(--text);font-weight:500;box-shadow:var(--shadow)}
+.sb-item .sb-icon{font-size:13px;width:18px;flex-shrink:0;text-align:center;line-height:1;opacity:0.75}
+.sb-item .sb-title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sb-item .sb-del{opacity:0;padding:2px 5px;border-radius:3px;font-size:14px;line-height:1;background:none;border:0;color:var(--text-3);cursor:pointer;margin-left:2px;transition:all var(--t);flex-shrink:0}
+.sb-item:hover .sb-del{opacity:1}
+.sb-item .sb-del:hover{color:var(--text);background:rgba(0,0,0,0.07)}
+.sidebar-hr{border:0;border-top:1px solid var(--border);margin:8px 12px}
+.sb-add{display:flex;align-items:center;gap:8px;padding:6px 10px;margin:2px 6px;border-radius:var(--r-sm);cursor:pointer;color:var(--text-3);font:400 13px var(--font);transition:all var(--t);border:0;background:none;width:calc(100% - 12px);text-align:left}
+.sb-add:hover{color:var(--text);background:var(--bg)}
+
+/* Main content area */
+.main-content{flex:1;overflow-y:auto;height:100vh;min-width:0}
+.main-inner{max-width:900px;margin:0 auto;padding:0 48px}
+
+/* Notes panel */
+.note-title-input{font-size:32px;font-weight:600;letter-spacing:-0.02em;border:0;outline:0;width:100%;background:transparent;color:var(--text);padding:40px 0 8px;line-height:1.2;font-family:var(--font);display:block}
+.note-title-input::placeholder{color:var(--text-3)}
+.note-body-input{width:100%;min-height:500px;border:0;outline:0;resize:none;font:400 15px/1.75 var(--font);color:var(--text);background:transparent;padding:4px 0 80px;display:block}
+.note-body-input::placeholder{color:var(--text-3)}
 </style>
 </head><body>
 
-<div class="container">
+<div class="app-layout">
 
+<!-- Sidebar -->
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-logo">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="12" height="12" rx="2"/><path d="M5 5h6M5 8h6M5 11h4"/></svg>
+    Eventful
+  </div>
+  <div class="sb-item active" data-tab="ei" onclick="switchTab('ei')">
+    <span class="sb-icon">⚡</span><span class="sb-title">Event Intelligence</span>
+  </div>
+  <div class="sb-item" data-tab="org" onclick="switchTab('org')">
+    <span class="sb-icon">🏢</span><span class="sb-title">Organization</span>
+  </div>
+  <div class="sb-item" data-tab="budget" onclick="switchTab('budget')">
+    <span class="sb-icon">💰</span><span class="sb-title">Budget</span>
+  </div>
+  <div class="sb-item" data-tab="attendees" onclick="switchTab('attendees')">
+    <span class="sb-icon">👤</span><span class="sb-title">Attendees</span>
+  </div>
+  <hr class="sidebar-hr">
+  <div class="sb-section-label">Notes</div>
+  <div id="sidebar-notes"></div>
+  <button class="sb-add" onclick="addNote()">
+    <span style="font-size:16px;line-height:1;margin-right:2px">+</span> New page
+  </button>
+</aside>
+
+<!-- Main content -->
+<div class="main-content" id="main-content">
+<div class="main-inner">
+
+<div id="event-header-wrap">
 <header class="page-header" id="page-header">
   <h1 class="event-name" id="event-name" data-empty="true" contenteditable="false" spellcheck="false">Untitled event</h1>
   <button type="button" class="manual-dot manual-dot-name" id="dot-name" style="display:none;vertical-align:super;margin-left:6px" onclick="openResetPopover('name',event)" title="Manually set — click to reset"></button>
@@ -382,24 +444,9 @@ table.list tr:hover .row-actions{opacity:1}
   <div id="size-warning" class="size-warning"></div>
   <div id="warn"></div>
 </section>
+</div><!-- event-header-wrap -->
 
-</div>
-
-<div class="sticky-bar" id="sticky-bar">
-  <div class="container sticky-inner">
-    <span class="sticky-event" id="sticky-event"></span>
-    <nav class="tabs">
-      <button class="tab active" data-tab="ei" onclick="switchTab('ei')">Event Intelligence</button>
-      <button class="tab" data-tab="org" onclick="switchTab('org')">Organization</button>
-      <button class="tab" data-tab="budget" onclick="switchTab('budget')">Budget</button>
-      <button class="tab" data-tab="attendees" onclick="switchTab('attendees')">Attendees</button>
-    </nav>
-  </div>
-</div>
-
-<div class="container">
-
-<main>
+<main id="panels-wrap">
 
 <!-- TAB: Event Intelligence -->
 <section class="tab-panel active" id="panel-ei">
@@ -524,7 +571,9 @@ table.list tr:hover .row-actions{opacity:1}
 
 </main>
 
-</div>
+</div><!-- main-inner -->
+</div><!-- main-content -->
+</div><!-- app-layout -->
 
 <!-- Date popover -->
 <div class="popover" id="date-popover">
@@ -882,11 +931,9 @@ function refreshHeader(){
     daysEl.textContent = '—'; labelEl.textContent = 'days away';
   }
 
-  // Sticky text
-  const stick = [];
-  if(name) stick.push(name);
-  if(e.event_date) stick.push(fmtDateHuman(e.event_date));
-  document.getElementById('sticky-event').textContent = stick.join(' · ');
+  // Sidebar logo title (sidebar replaces sticky bar)
+  const stickyEl = document.getElementById('sticky-event');
+  if(stickyEl){ const stick=[]; if(name) stick.push(name); if(e.event_date) stick.push(fmtDateHuman(e.event_date)); stickyEl.textContent = stick.join(' · '); }
 }
 
 async function refreshAllStats(){
@@ -1042,21 +1089,16 @@ document.getElementById('info-popover-input').addEventListener('keydown', (e) =>
   if(e.key === 'Escape') closeInfoPopover();
 });
 
-// ---------- Sticky header behavior ----------
-const stickyBar = document.getElementById('sticky-bar');
+// ---------- Sticky header behavior (sidebar layout — no sticky bar) ----------
 const pageHeader = document.getElementById('page-header');
-window.addEventListener('scroll', () => {
-  if(window.scrollY > pageHeader.offsetHeight - 30){
-    stickyBar.classList.add('scrolled');
-  } else {
-    stickyBar.classList.remove('scrolled');
-  }
-}, {passive:true});
 
 // ---------- Tabs ----------
 function switchTab(name){
-  document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+  document.querySelectorAll('.sb-item').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + name));
+  const isNote = name.startsWith('note-');
+  const wrap = document.getElementById('event-header-wrap');
+  if(wrap) wrap.style.display = isNote ? 'none' : '';
   stopAttendeePoll();
   if(name === 'budget') loadBudget();
   if(name === 'attendees'){ loadAttendees(); startAttendeePoll(); }
@@ -1676,9 +1718,87 @@ BUDGET_CATS.forEach(cat => {
   // Wire after budget renders, since these inputs are rendered dynamically.
 });
 
+// ---------- Notes ----------
+const NOTES_KEY = 'eventful_notes';
+function _loadNotes(){ try{ return JSON.parse(localStorage.getItem(NOTES_KEY)||'[]'); }catch{ return []; } }
+function _saveNotes(notes){ localStorage.setItem(NOTES_KEY, JSON.stringify(notes)); }
+
+function renderSidebarNotes(){
+  const notes = _loadNotes();
+  document.getElementById('sidebar-notes').innerHTML = notes.map(n => `
+    <div class="sb-item" data-tab="note-${escapeHtml(n.id)}" onclick="switchTab('note-${escapeHtml(n.id)}')">
+      <span class="sb-icon" style="opacity:0.5">📄</span>
+      <span class="sb-title">${escapeHtml(n.title||'Untitled')}</span>
+      <button class="sb-del" onclick="deleteNote('${escapeHtml(n.id)}',event)" title="Delete">×</button>
+    </div>`).join('');
+}
+
+function _buildNotePanel(note){
+  const sec = document.createElement('section');
+  sec.className = 'tab-panel';
+  sec.id = 'panel-note-' + note.id;
+  sec.innerHTML = `
+    <input class="note-title-input" placeholder="Untitled" value="${escapeHtml(note.title||'')}"
+      data-note-id="${escapeHtml(note.id)}"
+      oninput="updateNoteTitle('${escapeHtml(note.id)}',this.value)">
+    <textarea class="note-body-input" placeholder="Start writing…"
+      oninput="updateNoteBody('${escapeHtml(note.id)}',this.value)">${escapeHtml(note.content||'')}</textarea>`;
+  return sec;
+}
+
+function addNote(){
+  const notes = _loadNotes();
+  const id = Date.now().toString(36) + Math.random().toString(36).slice(2,5);
+  const note = {id, title:'', content:'', created: Date.now()};
+  notes.push(note);
+  _saveNotes(notes);
+  document.getElementById('panels-wrap').appendChild(_buildNotePanel(note));
+  renderSidebarNotes();
+  switchTab('note-' + id);
+  setTimeout(() => {
+    const inp = document.querySelector('.note-title-input[data-note-id="'+id+'"]');
+    if(inp) inp.focus();
+  }, 30);
+}
+
+function deleteNote(id, e){
+  e.stopPropagation();
+  _saveNotes(_loadNotes().filter(n => n.id !== id));
+  const panel = document.getElementById('panel-note-' + id);
+  if(panel) panel.remove();
+  renderSidebarNotes();
+  const stillActive = document.querySelector('.sb-item.active');
+  if(!stillActive || stillActive.dataset.tab === 'note-' + id) switchTab('ei');
+}
+
+const _noteDebounce = {};
+function updateNoteTitle(id, title){
+  clearTimeout(_noteDebounce[id+'t']);
+  _noteDebounce[id+'t'] = setTimeout(() => {
+    const notes = _loadNotes();
+    const n = notes.find(x => x.id === id);
+    if(n){ n.title = title; _saveNotes(notes); renderSidebarNotes(); }
+    document.querySelectorAll('.sb-item').forEach(b => b.classList.toggle('active', b.dataset.tab === 'note-'+id));
+  }, 350);
+}
+function updateNoteBody(id, content){
+  clearTimeout(_noteDebounce[id+'b']);
+  _noteDebounce[id+'b'] = setTimeout(() => {
+    const notes = _loadNotes();
+    const n = notes.find(x => x.id === id);
+    if(n){ n.content = content; _saveNotes(notes); }
+  }, 350);
+}
+
+function initNotes(){
+  _loadNotes().forEach(n => document.getElementById('panels-wrap').appendChild(_buildNotePanel(n)));
+  renderSidebarNotes();
+}
+
 // ---------- Init ----------
 loadEventMeta();
 refreshAllStats();
+initNotes();
 // Render an empty EI state initially so the tab doesn't look broken before /run
 document.getElementById('result').innerHTML = emptyState('No prospects yet','Run a brief above to source attendees.','people');
 </script>
